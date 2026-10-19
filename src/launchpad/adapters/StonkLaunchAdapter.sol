@@ -708,6 +708,20 @@ contract StonkLaunchAdapter is ILaunchAdapter {
     ///      resting here goes to the owner; and `quoteSpent` is `p.quoteIn`,
     ///      which is what the venue consumed. See the split at the end of this
     ///      function for the live trace and the one stated assumption.
+    ///
+    ///      SLITHER REENTRANCY TRIAGE (readiness review F-3, false positive;
+    ///      the same argument as `SushiLaunchAdapter.executeLaunch`). The pad
+    ///      calls (`createLaunch`, `arm`, `buy`) run before the `launchId` /
+    ///      `launchToken` writes complete, which is the shape the detector
+    ///      flags. This function is callable only by the implementation
+    ///      (`NotImplementation`) and only once per clone (`AlreadyLaunched`);
+    ///      every cross-function reader short-circuits on `launchToken == 0`;
+    ///      the venue's state-changing entry points are `nonReentrant`; the
+    ///      launch token is the pad's own mint with no transfer hook; and the
+    ///      quote is a lane token (WETH, USDG, STONK or a stock token) that
+    ///      does not call the recipient. No reentrant frame can observe a
+    ///      half-written clone to its advantage.
+    // slither-disable-next-line reentrancy-no-eth,reentrancy-benign
     function executeLaunch(LaunchParams calldata p)
         external
         returns (address token, uint256 id, uint256 reserveHeld, uint256 quoteSpent)
