@@ -13,13 +13,24 @@ The format matches the protocol's `chains/<chainid>.json`: flat `KEY: address` p
 
 `_meta.launchpad` records the block, deployer, the protocol singletons used, the Stonk `padSetHash`, the Sushi launchpad's ERC-1967 implementation at deploy, and whether the owner steps (grants, template approval) landed in the same run. `_meta.lighter` records the same minus the venue fields.
 
+`STONK_LAUNCH_ADAPTER` may be absent on a chain. A Sushi-only ceremony (`--sig 'runSushi()'`) records only `LAUNCHPAD_TEMPLATE` and `SUSHI_LAUNCH_ADAPTER`, and its `_meta.launchpad` has no `stonkPadSetHash`. Verify such a chain with `--sig 'verifySushi()'`; `verify()` requires every Stonk counterparty, so it fails there by design.
+
+On 4663 the launchpad script reads the protocol singletons from the env first, then `lib/sherwood-protocol/chains/4663.json`, then `script/launchpad/addresses-4663.json`, which carries them with provenance (F-9 in `docs/launchpad/audit-2026-10-19-mainnet-readiness.md`):
+
+| Key | 4663 address |
+| --- | --- |
+| `TIER_REGISTRY` | `0x4614f058920941A0a9a852e62485fbDE692D75E1` |
+| `STRATEGY_FACTORY` | `0xb06788F027268a9A06c3AD41a88559530D2E54b1` |
+| `UNISWAP_SWAP_ADAPTER` | `0x54e6a7af53143556973493fdec9d7837a77c67ef` |
+
 Check a recorded deployment against the chain without redeploying:
 
 ```bash
 forge script script/launchpad/DeployLaunchpadStrategy.s.sol:DeployLaunchpadStrategy --rpc-url <rpc> --sig 'verify()'
+forge script script/launchpad/DeployLaunchpadStrategy.s.sol:DeployLaunchpadStrategy --rpc-url <rpc> --sig 'verifySushi()'
 forge script script/lighter/DeployLighterTemplate.s.sol:DeployLighterTemplate --rpc-url <rpc> --sig 'verify()'
 ```
 
 Verification treats owner steps as facts: a deployment still owed Safe transactions fails it until they land.
 
-Lighter is deployed on Robinhood mainnet only. The 9994663 fork has no Lighter sequencer, so its withdrawals never mature.
+Nothing from this repo is deployed on Robinhood mainnet 4663 yet: there is no `deployments/4663.json`. The 9994663 fork book, `deployments/9994663.json`, holds the full Stonk and Sushi ceremony. The 9994663 fork has no Lighter sequencer, so Lighter withdrawals never mature there.

@@ -25,19 +25,21 @@ holders claim a pro-rata slice of that reserve. The venue plugs in through
 | `src/launchpad/ILaunchAdapter.sol` | The venue abstraction: lifecycle verbs plus the custody invariant |
 | `src/launchpad/LaunchpadStrategy.sol` | The `BaseStrategy` clone template |
 | `src/launchpad/adapters/StonkLaunchAdapter.sol` | StonkBrokers Smart Launch V2 adapter: implementation plus one ERC-1167 clone per launch |
+| `src/launchpad/adapters/SushiLaunchAdapter.sol` | Sushi Launchpad V2 adapter: implementation plus one ERC-1167 clone per launch (`docs/launchpad/sushi.md`) |
 | `src/launchpad/vendor/stonkbrokers/` | Reduced venue interfaces transcribed from verified source |
 | `script/launchpad/DeployLaunchpadStrategy.s.sol` | Deploy and v1 registry steps for Robinhood 4663 |
-| `script/launchpad/addresses-4663.json` | Stonk pad set and lens, with identity evidence |
+| `script/launchpad/addresses-4663.json` | Stonk pad set and lens, the Sushi V2 proxy, and the three protocol singletons the pinned protocol book lacks, each with identity evidence |
 
-The Sushi adapter is being rewritten for Sushi Launchpad V2 on a separate
-branch and is not in this tree. The Sushi facts below describe Launchpad V1
-and stay here because they are what shaped the interface. The deploy script
-has a `// SUSHI V2:` seam where the new adapter slots in.
+The Sushi Launchpad V2 adapter is `src/launchpad/adapters/SushiLaunchAdapter.sol`,
+documented in `docs/launchpad/sushi.md`. The Sushi facts below describe
+Launchpad V1 and stay here because they are what shaped the interface.
 
 ## The venues, side by side
 
 All facts verified against Robinhood mainnet 4663 (verified explorer source and
 `cast` reads, 2026-08-22 to 2026-08-31).
+
+The Sushi column is Launchpad V1; `docs/launchpad/sushi.md` has V2.
 
 | | Sushi Launchpad V1 | StonkBrokers Smart Launch V2/V3 |
 |---|---|---|
@@ -157,7 +159,8 @@ settled has no way home except a later governance batch naming it to
 `rescueTo`. Naming the vault at launch removes that problem: fees never enter
 strategy custody, settlement makes no venue call, and anyone may push accrued
 fees with the adapter's permissionless `collectFees(launchRef)`. Launch-token
-fees arrive in kind and unpriced; a later proposal disposes of them.
+fees arrive in kind and unpriced, and on v1-deploy nothing can dispose of them
+yet (see the F-5 note under Decision 4).
 
 **Fees in the vault asset are priced, and can be sniped.** When the launch is
 quoted in the vault asset (a WETH vault launching against WETH, a USDG vault
@@ -167,8 +170,18 @@ Fees accrue at the venue and arrive in a lump whenever anyone calls
 instant. So someone can deposit, trigger `collectFees`, and redeem with a
 pro-rata cut of fees earned while long-term holders carried the launch. The
 template cannot close this on v1, because collection is permissionless by
-design. Operators should collect often (a keeper), so no large lump is ever
-pending. Closed-deposit vaults are not exposed.
+design. The mainnet decision (G-5, F-2 in
+`docs/launchpad/audit-2026-10-19-mainnet-readiness.md`) is to accept this and
+not gate `collectFees`. A keeper collects on a short cadence so no large lump
+is ever pending (SHE-313's keeper is the home for it), and the cohort
+disclosure says so. `depositsRestricted` narrows the attacker set to approved
+depositors; it does not remove it. Closed-deposit vaults are not exposed.
+
+The same lump has a second shape. Fees that land while a later proposal is
+`Executed` read as that proposal's profit, because the governor measures P&L as
+the vault-asset balance delta, so they feed that proposer's performance fee.
+With owner-only proposals the proposer is the owner. A gate on `collectFees`
+would not close this shape; collecting on a short cadence keeps it small.
 
 On StonkBrokers the clone stays the creator (it needs `arm`/`abort`), so the
 clone forwards to its pinned `feeRecipient` rather than the venue paying the
@@ -202,6 +215,20 @@ move under the claim.
 - A claim in the execute block reverts with the template's own
   `SnapshotNotFinal`, not OZ's `ERC5805FutureLookup` from inside the vault.
 - `claimFor(holder)` is permissionless and pays the holder, never the caller.
+
+**Surplus over `reserveAmount` is dead weight in the vault.** `_execute`
+records `reserve = reserveAmount` even when the launch delivered more, and
+`_settle` pushes every launch token left, surplus and unclaimed reserve alike,
+to the vault in kind. On v1-deploy nothing can dispose of that balance:
+`SyndicateVault.rescueERC20` can only move a non-asset token to a strategy
+clone of the same vault, and no shipped template can take or sell an unfeeded
+launch token (F-5 in `docs/launchpad/audit-2026-10-19-mainnet-readiness.md`).
+The rule lives in the CLI, not the contract: the CLI sets `reserveAmount ==
+minTokensOut`, both close to the quoter estimate, and the SHE-313 `claimFor`
+sweep runs before `windowEnd` so the unclaimed remainder is small. The contract
+alternative, `reserve = min(held, launchSupply * MAX_RESERVE_BPS / BPS)`, which
+would hand holders the surplus up to the 20% cap, was considered and not taken
+in this PR.
 
 ## Decision 4b: the launch fee has a voted cap
 
@@ -327,6 +354,20 @@ change only before execute, and each value bound may only tighten.
 `minTokensOut` is visible to voters, and a proposer who could lower it after
 the vote would have been handed a sandwich budget by the vote itself.
 
+**Mainnet launches quote in the vault asset.** The quote leg's floor is the
+voted `minQuoteOut`, a static number, and `executeProposal` is permissionless,
+so anyone may bracket the execute transaction and take the gap between a fair
+fill and that floor (G-4, F-1 in
+`docs/launchpad/audit-2026-10-19-mainnet-readiness.md`). The rule for
+mainnet is `quoteToken == asset` (a USDG vault launches against USDG): no swap
+leg exists, so there is nothing to sandwich. No contract change. Tightening
+`minQuoteOut` through `updateParams` right before execute is only a partial
+mitigation when `quoteToken != asset`: `executeProposal` is open for the whole
+execution window, so a third party can execute against the stale voted floor
+before the proposer tightens it. If launches with `quoteToken != asset` are
+wanted past the beta, the fix is a feed-anchored floor at execute (option B),
+mirroring `PortfolioStrategy._buyFloor`.
+
 ## Decision 7: registry gates on v1
 
 v1 deleted `TierRegistry.isAdapterAllowed` and the tier certification it came
@@ -349,14 +390,23 @@ with. Gating is now the counterparty allowlist:
 - The quote token and the launch token are not counterparties. The strategy
   holds them as inventory and never calls them beyond ERC-20.
 
-The deploy ceremony (`script/launchpad/DeployLaunchpadStrategy.s.sol`) grants
-the Stonk adapter, its eight V2 pads and the lens with `setCounterpartyAllowed`,
-and approves the template with `StrategyFactory.setTemplateApproval`. It
-performs those writes when the broadcaster owns the registry and factory and
-prints them as Safe transactions otherwise. The protocol's own swap adapter is
-granted by the core ceremony. The pad and lens grants are read by no code
-today; they record which venues the protocol vouched for, as `ILaunchAdapter`
-asks.
+The deploy ceremony is `script/launchpad/DeployLaunchpadStrategy.s.sol`. On
+Robinhood mainnet 4663 it is Sushi-only: `--sig 'runSushi()'` deploys the
+template and the Sushi adapter, grants `[sushiAdapter, Sushi proxy]` with
+`setCounterpartyAllowed`, and approves the template with
+`StrategyFactory.setTemplateApproval`; `--sig 'verifySushi()'` checks it. The
+full `run()`, which also deploys the Stonk adapter and grants it, its eight V2
+pads and the lens, is the fork ceremony (chain 9994663). Stonk is not deployed
+or granted on 4663; its code stays in the tree, fork-only. The Stonk
+fast-follow path: apply F-4 (`docs/launchpad/audit-2026-10-19-mainnet-readiness.md`)
+first, then deploy the Stonk adapter and grant the adapter, the eight V2 pads
+and the lens against the already-recorded template, then run `verify()`.
+
+Both ceremonies perform the owner writes when the broadcaster owns the registry
+and factory and print them as Safe transactions otherwise. The protocol's own
+swap adapter is granted by the core ceremony. The venue grants (the Sushi
+proxy; on the fork, the pads and lens) are read by no code today; they record
+which venues the protocol vouched for, as `ILaunchAdapter` asks.
 
 ## Trust notes
 
@@ -365,19 +415,35 @@ asks.
   allowed) could move the reserve out of a clone during the claim window. That
   is v1's emergency exit, not something this template can narrow.
 - Launch tokens, raw quote and fees delivered to the vault sit outside
-  `totalAssets()`. The vault owner's `rescueERC20` can move non-asset tokens
-  whenever no proposal is open; disposing of them otherwise takes a proposal.
+  `totalAssets()`. On v1-deploy the vault owner's `rescueERC20` can move a
+  non-asset token only to a strategy clone of the same vault, and no shipped
+  template takes an unfeeded launch token, so disposing of it waits on a
+  template that can (Decision 4, F-5).
 - `StonkLaunchAdapter` holds the lens and never calls it. `minTokensOut` is
   quoted off-chain through the lens and voted on; re-quoting at execute would
   enforce a floor nobody approved, read off a price movable in the same
   transaction.
+- Sushi's owner is trusted with more than the fee stream (F-6 in
+  `docs/launchpad/audit-2026-10-19-mainnet-readiness.md`).
+  `lockFeeReceiver` is advisory in V2.2: `setFeeReceiver` is `onlyOwner` and
+  does not read `feeReceiverLocked`. The owner can also take the creator role
+  (`transferCreator` admits the owner) and call `setFeeDisposition` to
+  `DISTRIBUTE_TO_HOLDERS`, which installs a transfer hook on the launch token
+  (Sushi's own `HolderRewards` contract). A reverting hook would make `claim`
+  and the in-kind push at settle revert, which wedges settlement until the
+  vault owner's emergency path.
+- The counterparty grant on the Sushi proxy pins the proxy's codehash, not the
+  implementation's, so a Sushi upgrade is invisible to `isCounterpartyAllowed`.
+  The ceremony records the implementation slot; the operational control is a
+  pre-launch check that `implementationRevision() == 2` and the slot still
+  matches the recorded one.
 
 ## Open questions
 
-1. **WOOD on Sushi.** Needs the Sushi owner (`0x6fA4…4657`) to register a
-   WOOD/USD aggregator. Until then Sushi launches pair against WETH or another
-   feed-registered quote. Re-check against Sushi Launchpad V2 on the sushi-v2
-   branch.
+1. **WOOD on Sushi.** Needs the Sushi Launchpad V2 owner
+   (`0x104Cf4b0631b88a242Fec0161055a7437708C223`) to register a WOOD/USD feed.
+   WOOD was still unregistered at block 92,984,658 on 2026-10-19. Until then
+   Sushi launches pair against WETH, USDG or another feed-registered quote.
 2. **Default economics.** The default reserve fraction below the 20%
    `MAX_RESERVE_BPS` ceiling, and on Stonk the default `startMcapUsd8` /
    `gradMcapUsd8` / tax schedule the CLI will offer.
@@ -405,6 +471,6 @@ config pairs against WETH.
   `ConcentratedLiquidityStrategy`, `ISyndicateGovernor`, `IStrategyDelivery`,
   the storage-layout golden, CI and `foundry.toml` edits, and the
   `unpriced-cost-basis` change. v1 does not carry them.
-- `SushiLaunchAdapter`, its vendor interface, mocks and tests: being rewritten
-  for Sushi Launchpad V2 on the sushi-v2 branch.
+- The V1 `SushiLaunchAdapter`, its vendor interface, mocks and tests: replaced
+  by the V2 adapter in `src/launchpad/adapters/SushiLaunchAdapter.sol`.
 - `script/fork/launchpad-e2e.sh`: tied to a specific Tenderly vnet.
