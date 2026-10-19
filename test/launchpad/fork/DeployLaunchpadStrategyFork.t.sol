@@ -23,6 +23,10 @@ contract DeployLaunchpadHarness is DeployLaunchpadStrategy {
     function exposed_requireNoV3Pads(address[] memory pads, string[8] memory lanes) external view {
         _requireNoV3Pads(pads, lanes);
     }
+
+    function exposed_protocolAddress(string memory key) external view returns (address) {
+        return _protocolAddress(key);
+    }
 }
 
 /// @dev The two hops `LaunchpadStrategy` walks to find its registry, and the
@@ -109,8 +113,10 @@ contract DeployLaunchpadStrategyForkTest is Test {
     /// @notice `run()` completes on a 4663 fork: the adapter and the template
     ///         are deployed, the template fits Robinhood's 98,304-byte limit,
     ///         and the `padSetHash` it prints is reproducible from the book by
-    ///         anyone holding it. With no registry or factory resolvable at
-    ///         this pin, every owner step is printed rather than performed.
+    ///         anyone holding it. The registry and factory resolve from the
+    ///         launchpad book (F-9 fallback) and are owned by the Safe, not the
+    ///         test's broadcaster, so every owner step is printed rather than
+    ///         performed.
     function test_run_ceremonyCompletesOnA4663Fork() public {
         _skipIfNoFork();
 
@@ -252,6 +258,174 @@ contract DeployLaunchpadStrategyForkTest is Test {
         assertFalse(registry.isCounterpartyAllowed(address(script.stonkAdapter())), "no grant without ownership");
         assertFalse(registry.isCounterpartyAllowed(address(script.sushiAdapter())), "no Sushi grant without ownership");
         assertFalse(factory.approvedTemplate(address(script.template())), "no approval without ownership");
+    }
+
+    // ── the Sushi-only ceremony (the 4663 mainnet path) ──
+
+    /// @notice `runSushi()` completes on a 4663 fork: the template and the
+    ///         Sushi adapter are deployed, nothing Stonk is, the template fits
+    ///         the code-size limit, and the registry and factory resolve from
+    ///         the launchpad book without env vars (F-9). They are owned by the
+    ///         Safe, so the two grants and the approval are printed, not sent.
+    function test_runSushi_ceremonyCompletesOnA4663Fork() public {
+        _skipIfNoFork();
+
+        DeployLaunchpadHarness harness = new DeployLaunchpadHarness();
+        assertEq(
+            harness.exposed_protocolAddress("TIER_REGISTRY"),
+            0x4614f058920941A0a9a852e62485fbDE692D75E1,
+            "TIER_REGISTRY resolves from the launchpad book"
+        );
+        assertEq(
+            harness.exposed_protocolAddress("STRATEGY_FACTORY"),
+            0xb06788F027268a9A06c3AD41a88559530D2E54b1,
+            "STRATEGY_FACTORY resolves from the launchpad book"
+        );
+        assertEq(
+            harness.exposed_protocolAddress("UNISWAP_SWAP_ADAPTER"),
+            0x54E6A7af53143556973493fDeC9d7837A77c67eF,
+            "UNISWAP_SWAP_ADAPTER resolves from the launchpad book"
+        );
+
+        DeployLaunchpadStrategy script = new DeployLaunchpadStrategy();
+        script.runSushi();
+
+        address template = address(script.template());
+        address sushi = address(script.sushiAdapter());
+        assertEq(address(script.stonkAdapter()), address(0), "nothing Stonk deployed");
+        assertTrue(template.code.length != 0, "LaunchpadStrategy template deployed");
+        assertLt(template.code.length, ROBINHOOD_MAX_CODE_SIZE, "template exceeds Robinhood MaxCodeSize");
+        assertEq(LaunchpadStrategy(template).vault(), address(0), "a template binds no vault");
+        assertEq(
+            SushiLaunchAdapter(payable(sushi)).implementation(),
+            sushi,
+            "the deployed Sushi adapter IS the implementation"
+        );
+        assertEq(
+            address(SushiLaunchAdapter(payable(sushi)).launchpad()),
+            _bookAddress("SUSHI_LAUNCHPAD_V2"),
+            "Sushi adapter fronts the V2 launchpad"
+        );
+
+        // The live registry is the Safe's: nothing was granted or approved.
+        TierRegistry live = TierRegistry(0x4614f058920941A0a9a852e62485fbDE692D75E1);
+        assertFalse(live.isCounterpartyAllowed(sushi), "no grant without ownership");
+        assertFalse(
+            StrategyFactory(0xb06788F027268a9A06c3AD41a88559530D2E54b1).approvedTemplate(template),
+            "no approval without ownership"
+        );
+    }
+
+    /// @notice When the broadcaster owns the registry and the factory, the
+    ///         Sushi-only ceremony performs exactly its own steps: the adapter
+    ///         and the Sushi proxy become allowed counterparties, the template
+    ///         is approved, and no Stonk venue is touched. Then the proof that
+    ///         matters: a WETH-quoted clone binds against the Sushi adapter and
+    ///         the live venue (`quoteSupported(WETH)` reads the live feed).
+    function test_deploySushi_performsTheV1StepsWhenTheBroadcasterOwnsThem() public {
+        _skipIfNoFork();
+
+        (TierRegistry registry, StrategyFactory factory) = _ownedSingletons(_broadcaster());
+        DeployLaunchpadStrategy script = new DeployLaunchpadStrategy();
+        script.deploySushi(address(registry), address(factory));
+
+        address template = address(script.template());
+        address sushi = address(script.sushiAdapter());
+        assertTrue(registry.isCounterpartyAllowed(sushi), "Sushi adapter granted");
+        assertTrue(registry.isCounterpartyAllowed(_bookAddress("SUSHI_LAUNCHPAD_V2")), "Sushi launchpad granted");
+        assertTrue(factory.approvedTemplate(template), "template approved");
+        assertFalse(registry.isCounterpartyAllowed(_bookAddress("SAFE_LAUNCH_LENS_V2")), "lens not granted");
+        (, address[] memory pads) = _laneSetFromBook();
+        for (uint256 i; i < pads.length; ++i) {
+            assertFalse(registry.isCounterpartyAllowed(pads[i]), "pad not granted");
+        }
+
+        MockSwapAdapter swap = new MockSwapAdapter();
+        vm.prank(_broadcaster());
+        registry.setCounterpartyAllowed(address(swap), true);
+        ForkStubVault vault = new ForkStubVault(WETH, address(new ForkStubGovernor(address(registry))));
+
+        LaunchpadStrategy clone = LaunchpadStrategy(Clones.clone(template));
+        clone.initialize(address(vault), address(this), abi.encode(_sushiInitParams(sushi, address(swap))));
+        assertEq(address(clone.launchAdapter()), sushi, "bound to the granted Sushi adapter");
+    }
+
+    /// @notice `verifySushiDeployment` accepts exactly what a complete owned
+    ///         Sushi-only ceremony produced, `verifyDeployment` refuses it
+    ///         (there is no Stonk adapter to verify), and a test run writes no
+    ///         book.
+    function test_verifySushi_acceptsACompleteSushiOnlyDeploymentAndTestsWriteNoBook() public {
+        _skipIfNoFork();
+
+        (TierRegistry registry, StrategyFactory factory) = _ownedSingletons(_broadcaster());
+        vm.prank(_broadcaster());
+        registry.setStrategyFactory(address(factory));
+        DeployLaunchpadStrategy script = new DeployLaunchpadStrategy();
+        script.deploySushi(address(registry), address(factory));
+
+        address template = address(script.template());
+        address sushi = address(script.sushiAdapter());
+        script.verifySushiDeployment(address(registry), address(factory), template, sushi);
+
+        vm.expectRevert(bytes("STONK_LAUNCH_ADAPTER holds no code"));
+        script.verifyDeployment(address(registry), address(factory), template, address(0), sushi);
+
+        assertFalse(vm.exists(script.deploymentsPath(block.chainid)), "a test run wrote the deployments book");
+    }
+
+    /// @notice A Sushi-only deployment still owed its Safe transactions fails
+    ///         `verifySushiDeployment`: first on the approval, then, with the
+    ///         approval landed but a grant missing, on the counterparty.
+    function test_verifySushi_refusesADeploymentStillOwedOwnerSteps() public {
+        _skipIfNoFork();
+
+        address safe = makeAddr("ownerSafe");
+        (TierRegistry registry, StrategyFactory factory) = _ownedSingletons(safe);
+        vm.prank(safe);
+        registry.setStrategyFactory(address(factory));
+        DeployLaunchpadStrategy script = new DeployLaunchpadStrategy();
+        script.deploySushi(address(registry), address(factory));
+
+        address template = address(script.template());
+        address sushi = address(script.sushiAdapter());
+        vm.expectRevert(bytes("template not approved on StrategyFactory"));
+        script.verifySushiDeployment(address(registry), address(factory), template, sushi);
+
+        vm.startPrank(safe);
+        factory.setTemplateApproval(template, true);
+        registry.setCounterpartyAllowed(sushi, true);
+        vm.stopPrank();
+        vm.expectRevert(bytes("a counterparty is not allowed"));
+        script.verifySushiDeployment(address(registry), address(factory), template, sushi);
+
+        vm.prank(safe);
+        registry.setCounterpartyAllowed(_bookAddress("SUSHI_LAUNCHPAD_V2"), true);
+        script.verifySushiDeployment(address(registry), address(factory), template, sushi);
+    }
+
+    /// @notice Without ownership the Sushi-only ceremony deploys and prints:
+    ///         no grant, no approval.
+    function test_deploySushi_writesNothingWhenTheBroadcasterDoesNotOwnThem() public {
+        _skipIfNoFork();
+
+        (TierRegistry registry, StrategyFactory factory) = _ownedSingletons(makeAddr("ownerSafe"));
+        DeployLaunchpadStrategy script = new DeployLaunchpadStrategy();
+        script.deploySushi(address(registry), address(factory));
+
+        assertFalse(registry.isCounterpartyAllowed(address(script.sushiAdapter())), "no Sushi grant without ownership");
+        assertFalse(
+            registry.isCounterpartyAllowed(_bookAddress("SUSHI_LAUNCHPAD_V2")), "no venue grant without ownership"
+        );
+        assertFalse(factory.approvedTemplate(address(script.template())), "no approval without ownership");
+    }
+
+    function test_runSushi_rejectsAWrongChainId() public {
+        _skipIfNoFork();
+        vm.chainId(1);
+
+        DeployLaunchpadStrategy script = new DeployLaunchpadStrategy();
+        vm.expectRevert(bytes("wrong chain: expected Robinhood mainnet 4663 or its 9994663 fork"));
+        script.runSushi();
     }
 
     // ── replacing only the Stonk adapter ──
@@ -453,6 +627,30 @@ contract DeployLaunchpadStrategyForkTest is Test {
             deadline: uint64(block.timestamp + 1 days),
             settleSlippageBps: 500,
             maxFeeIn: 0,
+            name: "Fork Fund",
+            symbol: "FORK",
+            venueData: ""
+        });
+    }
+
+    /// @dev A WETH-quoted Sushi launch: `maxFeeIn` covers the venue's 5e14
+    ///      WETH launch fee, and the reserve floor equals the reserve (F-7).
+    function _sushiInitParams(address sushi, address swap) internal view returns (LaunchpadStrategy.InitParams memory) {
+        return LaunchpadStrategy.InitParams({
+            launchAdapter: sushi,
+            swapAdapter: swap,
+            assetIn: 1 ether,
+            quoteToken: WETH,
+            minQuoteOut: 0,
+            quoteSwapData: "",
+            feeSwapData: "",
+            launchSupply: 1_000_000_000e18,
+            reserveAmount: 100_000_000e18,
+            minTokensOut: 100_000_000e18,
+            claimWindow: 7 days,
+            deadline: uint64(block.timestamp + 1 days),
+            settleSlippageBps: 500,
+            maxFeeIn: 1e15,
             name: "Fork Fund",
             symbol: "FORK",
             venueData: ""

@@ -12,6 +12,10 @@ import {Script, VmSafe} from "forge-std/Script.sol";
  *       for the v1 singletons a template is wired into (`STRATEGY_FACTORY`,
  *       `TIER_REGISTRY`, ...). An env var of the same name wins, because the
  *       submodule pin can lag a protocol deployment. This repo never writes it.
+ *       A script may name a strategies-side FALLBACK book, read only when the
+ *       protocol book has no entry (`_protocolFallbackBook`): the 4663 book at
+ *       the current pin predates the mainnet core deploy, so the launchpad
+ *       script carries those three keys in its own book with provenance.
  *     - WRITE: this repo's book, `deployments/<chainid>.json`, for what this repo
  *       deploys. Same flat `KEY -> address` shape as the protocol's book, so the
  *       CLI maps it the way it already maps `chains/<chainid>.json`. Provenance
@@ -49,14 +53,29 @@ abstract contract DeploymentsBook is Script {
     }
 
     /// @dev A protocol singleton: env override first, then the pinned protocol
-    ///      book for THIS chain. `address(0)` when neither names it; the caller
-    ///      decides whether that is fatal.
-    function _protocolAddress(string memory key) internal view returns (address) {
-        address fromEnv = vm.envOr(key, address(0));
-        if (fromEnv != address(0)) return fromEnv;
+    ///      book for THIS chain, then the script's own fallback book if it
+    ///      names one (`_protocolFallbackBook`). `address(0)` when none names
+    ///      it; the caller decides whether that is fatal.
+    function _protocolAddress(string memory key) internal view returns (address a) {
+        a = vm.envOr(key, address(0));
+        if (a != address(0)) return a;
         string memory path =
             string.concat(vm.projectRoot(), "/lib/sherwood-protocol/chains/", vm.toString(block.chainid), ".json");
-        return _optionalFrom(path, key);
+        a = _optionalFrom(path, key);
+        if (a != address(0)) return a;
+        string memory fallbackBook = _protocolFallbackBook();
+        if (bytes(fallbackBook).length == 0) return address(0);
+        return _optionalFrom(string.concat(vm.projectRoot(), fallbackBook), key);
+    }
+
+    /// @dev A project-relative path to a strategies-side book consulted AFTER
+    ///      the protocol book, for the chains where the submodule pin predates
+    ///      the protocol's own deploy (4663 at the current pin). Empty by
+    ///      default: a script opts in by overriding, and only for a chain whose
+    ///      book it ships with provenance notes. The env var and the protocol
+    ///      book still win, so the fallback can never shadow a newer pin.
+    function _protocolFallbackBook() internal view virtual returns (string memory) {
+        return "";
     }
 
     /// @dev Like `_protocolAddress`, but the key must resolve.
