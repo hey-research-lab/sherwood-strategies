@@ -33,4 +33,4 @@ forge script script/lighter/DeployLighterTemplate.s.sol:DeployLighterTemplate --
 
 Verification treats owner steps as facts: a deployment still owed Safe transactions fails it until they land.
 
-Nothing from this repo is deployed on Robinhood mainnet 4663 yet: there is no `deployments/4663.json`. The 9994663 fork book, `deployments/9994663.json`, holds the full Stonk and Sushi ceremony. The 9994663 fork has no Lighter sequencer, so Lighter withdrawals never mature there.
+On Robinhood mainnet 4663, `deployments/4663.json` holds the Lighter template (`LIGHTER_PERP_TEMPLATE`, block 93,563,127). The launchpad is not deployed there yet; the Sushi-only ceremony adds `LAUNCHPAD_TEMPLATE` and `SUSHI_LAUNCH_ADAPTER` to that same book, next to the Lighter entry. The 9994663 fork book, `deployments/9994663.json`, holds the full Stonk and Sushi launchpad ceremony and no Lighter template: the fork has no Lighter sequencer, so Lighter withdrawals never mature there.

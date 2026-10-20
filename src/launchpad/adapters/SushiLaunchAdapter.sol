@@ -422,21 +422,9 @@ contract SushiLaunchAdapter is ILaunchAdapter {
     ///      return value: the token did not exist before this call, so the
     ///      owner's balance is exactly what the launch delivered.
     ///
-    ///      SLITHER REENTRANCY TRIAGE (readiness review F-3, false positive).
-    ///      `IWETH.withdraw` and `launchAndBuy{value: fee}` run before the
-    ///      `launchToken` / `quoteToken` writes, which is the shape the
-    ///      detector flags. It cannot be exploited: this function is callable
-    ///      only by the implementation (`NotImplementation`) and only once per
-    ///      clone (`AlreadyLaunched`); every cross-function reader short-
-    ///      circuits on `launchToken == 0` (`clonePhase`, `cloneCollectFees`);
-    ///      `receive` accepts native only from `weth`; every state-changing
-    ///      venue entry point is `nonReentrant` upstream; the launch token has
-    ///      no transfer hook unless `DISTRIBUTE_TO_HOLDERS`, which
-    ///      `_decodeVenueData` refuses; and the quote is USDG or WETH, neither
-    ///      of which calls the recipient. There is no state a reentrant frame
-    ///      could read to its advantage before the writes land. (The detector
-    ///      that fires here is `reentrancy-eth`, because `launchAndBuy` carries
-    ///      the launch fee as native value.)
+    ///      Slither `reentrancy-eth` (the fee rides as native value) is a false
+    ///      positive: triage in docs/launchpad/audit-2026-10-19-mainnet-readiness.md
+    ///      F-3 and its 2026-10-20 addendum. The disable below is comments only.
     // slither-disable-next-line reentrancy-eth,reentrancy-no-eth,reentrancy-benign
     function executeLaunch(LaunchParams calldata p, VenueData calldata v, uint256 fee)
         external

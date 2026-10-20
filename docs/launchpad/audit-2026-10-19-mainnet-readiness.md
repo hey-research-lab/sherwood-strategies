@@ -1,5 +1,7 @@
 # Launchpad mainnet readiness: light audit and minimum patch set
 
+Line numbers cite the sources at `8f8b349` (the review's base); the triage comments added by PR #10 shift the adapter files by a few lines.
+
 Date: 2026-10-19. Scope: `src/launchpad/LaunchpadStrategy.sol`, `src/launchpad/adapters/SushiLaunchAdapter.sol`,
 `src/launchpad/adapters/StonkLaunchAdapter.sol`, `src/launchpad/ILaunchAdapter.sol`,
 `script/launchpad/DeployLaunchpadStrategy.s.sol`, at sherwood-strategies `8f8b349`, against the protocol pin
@@ -380,3 +382,11 @@ TIER_REGISTRY=0x4614f058920941A0a9a852e62485fbDE692D75E1 STRATEGY_FACTORY=0xb067
 UNISWAP_SWAP_ADAPTER=0x54e6a7af53143556973493fdec9d7837a77c67ef \
 forge script script/launchpad/DeployLaunchpadStrategy.s.sol:DeployLaunchpadStrategy --rpc-url $RPC
 ```
+
+## Addendum, 2026-10-20: F-3 triage corrections from the PR #10 review
+
+The in-source comments above both `executeLaunch` functions now point here; the argument lives in this section.
+
+- `SushiLaunchAdapter.executeLaunch`: the detector that fires is `reentrancy-eth`, not `reentrancy-no-eth`, because `launchAndBuy{value: fee}` carries the launch fee as native value. `IWETH.withdraw` and `launchAndBuy` run before the `launchToken` / `quoteToken` writes. It cannot be exploited: the function is callable only by the implementation and only once per clone; every cross-function reader short-circuits on `launchToken == 0`; `receive` accepts native only from `weth`; the venue's state-changing entry points are `nonReentrant`; and `launch` is permissionless but always makes a fresh clone, so a reentrant frame cannot reach the half-written one. Two inputs are venue-owner trust, not facts of the code: the quote set is whatever the venue's feed registry admits (USDG and WETH at writing, extendable by the Sushi owner), and the launch token has no transfer hook only while the fee disposition is not `DISTRIBUTE_TO_HOLDERS`, which `_decodeVenueData` refuses at launch but the venue owner can set later (F-6).
+- `StonkLaunchAdapter.executeLaunch`: only `createLaunch` runs before the `launchId` / `launchToken` writes. `arm` and `buy` run after `launchToken` is set, so the "readers short-circuit on `launchToken == 0`" argument does not cover them; what covers them is that the pad (`StonkSafeLaunchpadV2`, verified source) makes all three `nonReentrant` and its token (`SafeLaunchV2Token`) is a plain ERC20 with no transfer hook, so no callback exists during `arm` or `buy`. The tax split's calls into venue-owner contracts sit inside the venue-owner trust accepted under F-6. Even a re-entered `cloneCollectFees` mid-`buy` would forward the creator fee to the same `feeRecipient` the split uses.
+- The inline `slither-disable-next-line` comments are live, not inert: deleting them brings back `reentrancy-eth` (High) on the Sushi function and `reentrancy-no-eth` on the Stonk function. They suppress only the named detectors. `slither.config.json` also excludes `reentrancy-benign` and `reentrancy-events` repo-wide (3 and 21 findings without it, about half in `src/lighter`), a disclosed choice.

@@ -146,8 +146,11 @@ template approval, and records the implementation slot under
   launch takes depositor money.
 
 These are enforced by the CLI encoder (sherwood repo,
-`cli/src/strategies/launchpad-template.ts`), not by the contracts. Finding ids
-refer to `docs/launchpad/audit-2026-10-19-mainnet-readiness.md`.
+`cli/src/strategies/launchpad-template.ts`, sherwood#689, open at writing),
+not by the contracts. A proposer who encodes calldata directly bypasses them;
+guardian review of the proposal is the backstop, and `quoteToken` is fixed at
+clone init so a permissionless `executeProposal` cannot change it afterwards.
+Finding ids refer to `docs/launchpad/audit-2026-10-19-mainnet-readiness.md`.
 
 ## Tests
 

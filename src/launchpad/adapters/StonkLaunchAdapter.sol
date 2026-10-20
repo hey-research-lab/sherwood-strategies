@@ -709,18 +709,9 @@ contract StonkLaunchAdapter is ILaunchAdapter {
     ///      which is what the venue consumed. See the split at the end of this
     ///      function for the live trace and the one stated assumption.
     ///
-    ///      SLITHER REENTRANCY TRIAGE (readiness review F-3, false positive;
-    ///      the same argument as `SushiLaunchAdapter.executeLaunch`). The pad
-    ///      calls (`createLaunch`, `arm`, `buy`) run before the `launchId` /
-    ///      `launchToken` writes complete, which is the shape the detector
-    ///      flags. This function is callable only by the implementation
-    ///      (`NotImplementation`) and only once per clone (`AlreadyLaunched`);
-    ///      every cross-function reader short-circuits on `launchToken == 0`;
-    ///      the venue's state-changing entry points are `nonReentrant`; the
-    ///      launch token is the pad's own mint with no transfer hook; and the
-    ///      quote is a lane token (WETH, USDG, STONK or a stock token) that
-    ///      does not call the recipient. No reentrant frame can observe a
-    ///      half-written clone to its advantage.
+    ///      Slither `reentrancy-no-eth` is a false positive: triage in
+    ///      docs/launchpad/audit-2026-10-19-mainnet-readiness.md F-3 and its
+    ///      2026-10-20 addendum. The disable below is comments only.
     // slither-disable-next-line reentrancy-no-eth,reentrancy-benign
     function executeLaunch(LaunchParams calldata p)
         external

@@ -13,9 +13,10 @@ import {Script, VmSafe} from "forge-std/Script.sol";
  *       `TIER_REGISTRY`, ...). An env var of the same name wins, because the
  *       submodule pin can lag a protocol deployment. This repo never writes it.
  *       A script may name a strategies-side FALLBACK book, read only when the
- *       protocol book has no entry (`_protocolFallbackBook`): the 4663 book at
- *       the current pin predates the mainnet core deploy, so the launchpad
- *       script carries those three keys in its own book with provenance.
+ *       protocol book has no entry (`_protocolFallbackBook`, which may depend
+ *       on the chain): the 4663 book at the current pin predates the mainnet
+ *       core deploy, so the launchpad script carries those three keys in its
+ *       own book with provenance, for 4663 only.
  *     - WRITE: this repo's book, `deployments/<chainid>.json`, for what this repo
  *       deploys. Same flat `KEY -> address` shape as the protocol's book, so the
  *       CLI maps it the way it already maps `chains/<chainid>.json`. Provenance

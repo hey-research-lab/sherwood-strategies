@@ -365,7 +365,9 @@ so anyone may bracket the execute transaction and take the gap between a fair
 fill and that floor (G-4, F-1 in
 `docs/launchpad/audit-2026-10-19-mainnet-readiness.md`). The rule for
 mainnet is `quoteToken == asset` (a USDG vault launches against USDG): no swap
-leg exists, so there is nothing to sandwich. No contract change. Tightening
+leg exists, so there is nothing to sandwich. No contract change; the CLI
+encoder refuses other quotes on 4663 (sherwood#689, open at writing) and
+guardian review is the backstop for calldata encoded by hand. Tightening
 `minQuoteOut` through `updateParams` right before execute is only a partial
 mitigation when `quoteToken != asset`: `executeProposal` is open for the whole
 execution window, so a third party can execute against the stale voted floor

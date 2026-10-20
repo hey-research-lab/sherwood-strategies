@@ -27,7 +27,11 @@ interface IPositionManagerFactory {
  *   Sushi adapter, two grants. Mainnet 4663 ships Sushi only (readiness review
  *   `docs/launchpad/audit-2026-10-19-mainnet-readiness.md`, section 5
  *   decision 1), so `runSushi()` is the 4663 ceremony and `run()` is the
- *   9994663 fork ceremony, where Stonk is already live. `verify()` requires
+ *   9994663 fork ceremony, where Stonk is already live; `run()` REFUSES
+ *   chain 4663, so forgetting `--sig 'runSushi()'` cannot deploy a Stonk
+ *   adapter or print a twelve-grant runbook there. `runSushi()` refuses a book
+ *   that already holds `STONK_LAUNCH_ADAPTER`, since it would rewrite
+ *   `_meta.launchpad` without the pad-set hash. `verify()` requires
  *   every Stonk counterparty and fails a Sushi-only deployment by design; use
  *   `verifySushi()` there. Adding Stonk to a Sushi-only chain later is a
  *   fast-follow with its own ceremony (see `STONK FAST-FOLLOW` below).
@@ -75,9 +79,9 @@ interface IPositionManagerFactory {
  *   `script/launchpad/addresses-4663.json` carries them with their provenance
  *   (read on 2026-10-19 at block 92,984,658; the swap adapter was identified
  *   from the registry's `CounterpartyAllowedSet` logs and confirmed by its
- *   `quoter()` / `v4Quoter()` reads). On the 9994663 fork the pinned protocol
- *   book already names the live stack and wins. Setting the env vars still
- *   overrides both books:
+ *   `quoter()` / `v4Quoter()` reads). The fallback is consulted on 4663 only;
+ *   on the 9994663 fork the pinned protocol book names the live stack and no
+ *   fallback exists. Setting the env vars still overrides both books:
  *     export TIER_REGISTRY=0x4614f058920941A0a9a852e62485fbDE692D75E1
  *     export STRATEGY_FACTORY=0xb06788F027268a9A06c3AD41a88559530D2E54b1
  *     export UNISWAP_SWAP_ADAPTER=0x54e6a7af53143556973493fdec9d7837a77c67ef
@@ -163,6 +167,7 @@ contract DeployLaunchpadStrategy is DeploymentsBook {
     ///         The 9994663 fork path; mainnet uses `runSushi()`.
     function run() external {
         require(_isRobinhood(), "wrong chain: expected Robinhood mainnet 4663 or its 9994663 fork");
+        require(block.chainid != CHAIN_ROBINHOOD, "4663 is Sushi-only: use --sig 'runSushi()'");
         deploy(_protocolAddress("TIER_REGISTRY"), _protocolAddress("STRATEGY_FACTORY"));
     }
 
@@ -320,6 +325,12 @@ contract DeployLaunchpadStrategy is DeploymentsBook {
     ///         or recorded; `stonkAdapter` stays zero.
     /// @dev    Same split as `deploy`, for the same fork-rehearsal reason.
     function deploySushi(address registry, address factory) public {
+        // A Sushi-only run rewrites `_meta.launchpad` whole and would drop the
+        // full ceremony's `stonkPadSetHash`; a chain with Stonk uses `run()`.
+        require(
+            _deployedAddress("STONK_LAUNCH_ADAPTER") == address(0),
+            "book already holds STONK_LAUNCH_ADAPTER: a Sushi-only run would drop its provenance, use run()"
+        );
         address sushiLaunchpad = _sushiLaunchpad();
 
         vm.startBroadcast();
@@ -604,7 +615,9 @@ contract DeployLaunchpadStrategy is DeploymentsBook {
         } else {
             console.log("TierRegistry:", registry);
             if (registry == address(0)) {
-                console.log("  TIER_REGISTRY unresolved: set it in the env or the protocol book");
+                console.log(
+                    "  TIER_REGISTRY unresolved: set it in the env, the protocol book or script/launchpad/addresses-4663.json"
+                );
             }
             for (uint256 i; i < counterparties.length; ++i) {
                 console.log("  setCounterpartyAllowed(counterparty, true):", counterparties[i]);
@@ -616,7 +629,9 @@ contract DeployLaunchpadStrategy is DeploymentsBook {
         } else {
             console.log("StrategyFactory:", factory);
             if (factory == address(0)) {
-                console.log("  STRATEGY_FACTORY unresolved: set it in the env or the protocol book");
+                console.log(
+                    "  STRATEGY_FACTORY unresolved: set it in the env, the protocol book or script/launchpad/addresses-4663.json"
+                );
             }
             console.log("  setTemplateApproval(template, true):", address(template));
             console.logBytes(abi.encodeCall(StrategyFactory.setTemplateApproval, (address(template), true)));
@@ -656,9 +671,11 @@ contract DeployLaunchpadStrategy is DeploymentsBook {
 
     /// @dev The launchpad book doubles as the fallback for the three protocol
     ///      keys the pinned `chains/4663.json` lacks (see the header and
-    ///      `DeploymentsBook._protocolAddress`).
-    function _protocolFallbackBook() internal pure override returns (string memory) {
-        return LAUNCHPAD_BOOK;
+    ///      `DeploymentsBook._protocolAddress`). On 4663 only: the fork's pinned
+    ///      protocol book is complete, and a future pin that drops a key must
+    ///      not silently resolve a mainnet address there.
+    function _protocolFallbackBook() internal view override returns (string memory) {
+        return block.chainid == CHAIN_ROBINHOOD ? LAUNCHPAD_BOOK : "";
     }
 
     /// @dev A venue key from this repo's launchpad book. Mandatory.
