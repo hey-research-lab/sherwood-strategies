@@ -421,6 +421,11 @@ contract SushiLaunchAdapter is ILaunchAdapter {
     ///      The reserve is measured on the OWNER, not taken from the venue's
     ///      return value: the token did not exist before this call, so the
     ///      owner's balance is exactly what the launch delivered.
+    ///
+    ///      Slither `reentrancy-eth` (the fee rides as native value) is a false
+    ///      positive: triage in docs/launchpad/audit-2026-10-19-mainnet-readiness.md
+    ///      F-3 and its 2026-10-20 addendum. The disable below is comments only.
+    // slither-disable-next-line reentrancy-eth,reentrancy-no-eth,reentrancy-benign
     function executeLaunch(LaunchParams calldata p, VenueData calldata v, uint256 fee)
         external
         returns (address token, uint256 reserveHeld)

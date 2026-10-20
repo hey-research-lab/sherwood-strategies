@@ -708,6 +708,11 @@ contract StonkLaunchAdapter is ILaunchAdapter {
     ///      resting here goes to the owner; and `quoteSpent` is `p.quoteIn`,
     ///      which is what the venue consumed. See the split at the end of this
     ///      function for the live trace and the one stated assumption.
+    ///
+    ///      Slither `reentrancy-no-eth` is a false positive: triage in
+    ///      docs/launchpad/audit-2026-10-19-mainnet-readiness.md F-3 and its
+    ///      2026-10-20 addendum. The disable below is comments only.
+    // slither-disable-next-line reentrancy-no-eth,reentrancy-benign
     function executeLaunch(LaunchParams calldata p)
         external
         returns (address token, uint256 id, uint256 reserveHeld, uint256 quoteSpent)

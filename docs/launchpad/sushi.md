@@ -86,6 +86,21 @@ transaction, or with the vault's capital, which the venue never holds.
 `test_CollectFees_AfterVenueOwnerRepointsReceiverReturnsZero` pins that
 `collectFees` degrades to `(0, 0)` rather than reverting if that happens.
 
+The owner's reach is wider than the fee stream (F-6 in
+`docs/launchpad/audit-2026-10-19-mainnet-readiness.md`). `lockFeeReceiver` is
+advisory in V2.2: `setFeeReceiver` is `onlyOwner` and does not read
+`feeReceiverLocked`. With the creator role the owner can call
+`setFeeDisposition` to `DISTRIBUTE_TO_HOLDERS`, which installs a transfer hook
+on the launch token (Sushi's own `HolderRewards` contract). The owner cannot
+take the reserve, but a reverting hook would make `claim` and the in-kind push
+at settle revert, which wedges settlement until the vault owner's emergency
+path.
+
+The counterparty grant on the venue pins the proxy's codehash, not the
+implementation's, so a Sushi upgrade is invisible to `isCounterpartyAllowed`.
+Before each launch, check `implementationRevision() == 2` and that the ERC-1967
+implementation slot still matches the one recorded at deploy.
+
 ## Quote support
 
 `quoteSupported(q)` is `quoteTokenPriceFeed(q) != 0` on the venue. At writing,
@@ -96,6 +111,13 @@ still be refused at launch if its feed's latest round is older than the venue's
 
 ## Deploy
 
+On mainnet the steps below are one script run:
+`forge script script/launchpad/DeployLaunchpadStrategy.s.sol:DeployLaunchpadStrategy --rpc-url <rpc> --sig 'runSushi()'`
+deploys the template and the adapter, performs or prints the two grants and the
+template approval, and records the implementation slot under
+`_meta.launchpad.sushiLaunchpadImplementation` in `deployments/4663.json`.
+`--sig 'verifySushi()'` checks the recorded deployment against the chain.
+
 1. `new SushiLaunchAdapter(0xF1716eBf85836ffE2985db9A50dd29e5814caBe9)`. The
    constructor reads `WETH()` from the venue and locks the implementation's
    initializer.
@@ -105,6 +127,30 @@ still be refused at launch if its feed's latest round is older than the venue's
 4. Record `implementationVersion()`, `implementationRevision()` and the
    implementation slot at deploy time. If Sushi upgrades the proxy, re-run the
    fork suite before the next launch.
+
+### Launch rules for mainnet
+
+- `quoteToken == asset` (a USDG vault launches against USDG), so the strategy
+  runs no swap leg and execute has nothing to sandwich (G-4, F-1).
+- `minTokensOut >= reserveAmount`. The adapter reverts
+  `ReserveFloorBelowReserve` at execute otherwise: a wasted vote, no capital at
+  risk (F-7).
+- `reserveAmount == minTokensOut`, both sized near the dev buy's expected
+  output, so little surplus launch token reaches the vault in kind at settle
+  (F-5). Sushi V2 has no quoter for the dev buy (the pool is created inside
+  `launchAndBuy`); size from a measured launch (about 164.56M tokens per
+  1,000 USDG at writing) and re-measure if Sushi reprices its opening.
+- A keeper calls `collectFees` on a short cadence, so no fee lump accrues for
+  a depositor to time (G-5, F-2). SHE-313 shipped only the `claimFor` sweep;
+  the `collectFees` job is a separate keeper follow-up and must run before a
+  launch takes depositor money.
+
+These are enforced by the CLI encoder (sherwood repo,
+`cli/src/strategies/launchpad-template.ts`, sherwood#689, open at writing),
+not by the contracts. A proposer who encodes calldata directly bypasses them;
+guardian review of the proposal is the backstop, and `quoteToken` is fixed at
+clone init so a permissionless `executeProposal` cannot change it afterwards.
+Finding ids refer to `docs/launchpad/audit-2026-10-19-mainnet-readiness.md`.
 
 ## Tests
 

@@ -22,6 +22,20 @@ interface IPositionManagerFactory {
  *         mainnet (chain 4663), and bring them to the state protocol v1 needs
  *         before any vault can use them.
  *
+ *   TWO CEREMONIES. `run()` is the full one: template, Stonk adapter, Sushi
+ *   adapter, twelve grants. `runSushi()` is the SUSHI-ONLY one: template and
+ *   Sushi adapter, two grants. Mainnet 4663 ships Sushi only (readiness review
+ *   `docs/launchpad/audit-2026-10-19-mainnet-readiness.md`, section 5
+ *   decision 1), so `runSushi()` is the 4663 ceremony and `run()` is the
+ *   9994663 fork ceremony, where Stonk is already live; `run()` REFUSES
+ *   chain 4663, so forgetting `--sig 'runSushi()'` cannot deploy a Stonk
+ *   adapter or print a twelve-grant runbook there. `runSushi()` refuses a book
+ *   that already holds `STONK_LAUNCH_ADAPTER`, since it would rewrite
+ *   `_meta.launchpad` without the pad-set hash. `verify()` requires
+ *   every Stonk counterparty and fails a Sushi-only deployment by design; use
+ *   `verifySushi()` there. Adding Stonk to a Sushi-only chain later is a
+ *   fast-follow with its own ceremony (see `STONK FAST-FOLLOW` below).
+ *
  *   MAINNET-ONLY BY CONSTRUCTION. The venues exist on 4663 and nowhere else,
  *   so the script refuses any other chain rather than deploying a template
  *   whose every clone would revert at init. Fork rehearsal happens on a 4663
@@ -57,21 +71,31 @@ interface IPositionManagerFactory {
  *   post-deploy reads at the end say what is actually true on-chain.
  *
  *   ADDRESSES. Protocol-owned keys (`TIER_REGISTRY`, `STRATEGY_FACTORY`,
- *   `UNISWAP_SWAP_ADAPTER`) are read from the protocol's own book for THIS
- *   chain, `lib/sherwood-protocol/chains/<chainid>.json`, and may be
- *   overridden by an env var of the same name (the v1 book at the current pin
- *   predates the 4663 core deploy, so on mainnet they are absent until it
- *   lands; on the 9994663 fork the pinned book already names the live stack).
+ *   `UNISWAP_SWAP_ADAPTER`) resolve in this order: an env var of the same
+ *   name, the protocol's own book for THIS chain
+ *   (`lib/sherwood-protocol/chains/<chainid>.json`), then this repo's
+ *   launchpad book. The v1 book at the current pin predates the 4663 core
+ *   deploy and names none of the three for mainnet, so
+ *   `script/launchpad/addresses-4663.json` carries them with their provenance
+ *   (read on 2026-10-19 at block 92,984,658; the swap adapter was identified
+ *   from the registry's `CounterpartyAllowedSet` logs and confirmed by its
+ *   `quoter()` / `v4Quoter()` reads). The fallback is consulted on 4663 only;
+ *   on the 9994663 fork the pinned protocol book names the live stack and no
+ *   fallback exists. Setting the env vars still overrides both books:
+ *     export TIER_REGISTRY=0x4614f058920941A0a9a852e62485fbDE692D75E1
+ *     export STRATEGY_FACTORY=0xb06788F027268a9A06c3AD41a88559530D2E54b1
+ *     export UNISWAP_SWAP_ADAPTER=0x54e6a7af53143556973493fdec9d7837a77c67ef
  *   Venue keys the protocol does not carry (the Stonk pads, the lens, Sushi)
- *   live in `script/launchpad/addresses-4663.json`, with their identity
- *   evidence; the fork replays mainnet's venues, so it reads the same file.
+ *   live in the same launchpad book with their identity evidence; the fork
+ *   replays mainnet's venues, so it reads the same file.
  *
  *   RECORDING. On a real broadcast the deployed addresses are written to this
  *   repo's book, `deployments/<chainid>.json`, as `LAUNCHPAD_TEMPLATE`,
- *   `SUSHI_LAUNCH_ADAPTER` and `STONK_LAUNCH_ADAPTER`, with the `padSetHash`
- *   and the Sushi implementation slot under `_meta.launchpad` (see
- *   `DeploymentsBook`). `--sig 'verify()'` re-reads them and checks the whole
- *   deployment against the chain without redeploying.
+ *   `SUSHI_LAUNCH_ADAPTER` and (full ceremony only) `STONK_LAUNCH_ADAPTER`,
+ *   with the `padSetHash` (full ceremony only) and the Sushi implementation
+ *   slot under `_meta.launchpad` (see `DeploymentsBook`). `--sig 'verify()'`
+ *   or `--sig 'verifySushi()'` re-reads them and checks the deployment against
+ *   the chain without redeploying.
  *
  *   SUSHI IDENTITY. Before deploying the Sushi adapter the script asserts the
  *   launchpad is V2.2 (`implementationVersion() == 2`, `implementationRevision()
@@ -90,15 +114,32 @@ interface IPositionManagerFactory {
  *   the Stonk adapter's CODE, and that hash is the only on-chain witness of the
  *   lane CONFIGURATION the code was granted with.
  *
- *   Usage — Tenderly Robinhood fork (9994663):
+ *   Usage — Tenderly Robinhood fork (9994663), full ceremony:
  *     forge script script/launchpad/DeployLaunchpadStrategy.s.sol:DeployLaunchpadStrategy \
  *       --rpc-url "$TENDERLY_ROBINHOOD_RPC_URL" --account sherwood-deployer --broadcast --slow
- *   Usage — Robinhood mainnet (4663):
+ *   Usage — Robinhood mainnet (4663), SUSHI ONLY (dry run first, without
+ *   `--broadcast`, and paste the printed runbook into the PR):
  *     forge script script/launchpad/DeployLaunchpadStrategy.s.sol:DeployLaunchpadStrategy \
- *       --rpc-url robinhood --account sherwood-deployer --broadcast
- *   Verify either afterwards:
+ *       --rpc-url robinhood --account sherwood-deployer --broadcast --sig 'runSushi()'
+ *   Verify afterwards (`verify()` on the fork, `verifySushi()` on mainnet):
  *     forge script script/launchpad/DeployLaunchpadStrategy.s.sol:DeployLaunchpadStrategy \
- *       --rpc-url <same> --sig 'verify()'
+ *       --rpc-url <same> --sig 'verifySushi()'
+ *   On 4663 the deployer does not own the registry or the factory (the Safe
+ *   `0x5A00afAecE9CF61A768E2AE2713084C8d354DF94` does), so the two grants and
+ *   the template approval are PRINTED as Safe transactions with calldata, and
+ *   `verifySushi()` fails until the Safe has executed them.
+ *
+ *   STONK FAST-FOLLOW on a Sushi-only chain. Not a script entry point yet, on
+ *   purpose: the readiness review's F-4 (dev buy at the opening tax) is to be
+ *   applied to `StonkLaunchAdapter` first, and the Stonk fork suite re-run.
+ *   The ceremony is then: deploy `new StonkLaunchAdapter(quotes, pads, lens)`
+ *   over `_stonkLaneSet()`, grant the adapter, the eight V2 pads and the lens
+ *   (`setCounterpartyAllowed`, printed for the Safe), record
+ *   `STONK_LAUNCH_ADAPTER` and `_meta.launchpad.stonkPadSetHash`, and switch
+ *   the chain to `verify()`. The template needs no change and no re-approval:
+ *   it binds any granted adapter at clone-init. `redeployStonkAdapter` already
+ *   has the adapter half of that ceremony; the pad and lens grants are the
+ *   other half.
  *
  *   REPLACING ONLY THE STONK ADAPTER (a fix to `StonkLaunchAdapter`):
  *     forge script script/launchpad/DeployLaunchpadStrategy.s.sol:DeployLaunchpadStrategy \
@@ -122,13 +163,25 @@ contract DeployLaunchpadStrategy is DeploymentsBook {
     SushiLaunchAdapter public sushiAdapter;
     LaunchpadStrategy public template;
 
+    /// @notice The FULL ceremony (template, Stonk adapter, Sushi adapter).
+    ///         The 9994663 fork path; mainnet uses `runSushi()`.
     function run() external {
         require(_isRobinhood(), "wrong chain: expected Robinhood mainnet 4663 or its 9994663 fork");
+        require(block.chainid != CHAIN_ROBINHOOD, "4663 is Sushi-only: use --sig 'runSushi()'");
         deploy(_protocolAddress("TIER_REGISTRY"), _protocolAddress("STRATEGY_FACTORY"));
     }
 
-    /// @notice Check a recorded deployment against the chain, without
-    ///         deploying: `--sig 'verify()'`.
+    /// @notice The SUSHI-ONLY ceremony (template, Sushi adapter): the 4663
+    ///         mainnet path. `--sig 'runSushi()'`.
+    function runSushi() external {
+        require(_isRobinhood(), "wrong chain: expected Robinhood mainnet 4663 or its 9994663 fork");
+        deploySushi(_protocolAddress("TIER_REGISTRY"), _protocolAddress("STRATEGY_FACTORY"));
+    }
+
+    /// @notice Check a recorded FULL deployment against the chain, without
+    ///         deploying: `--sig 'verify()'`. Requires `STONK_LAUNCH_ADAPTER`
+    ///         and every Stonk counterparty, so it fails a Sushi-only chain by
+    ///         design; use `verifySushi()` there.
     function verify() external view {
         require(_isRobinhood(), "wrong chain: expected Robinhood mainnet 4663 or its 9994663 fork");
         verifyDeployment(
@@ -140,27 +193,59 @@ contract DeployLaunchpadStrategy is DeploymentsBook {
         );
     }
 
-    /// @notice Every property a correct deployment has, asserted. Owner steps
-    ///         are checked as FACTS: a deployment still owed Safe transactions
-    ///         fails verification until they land.
+    /// @notice Check a recorded SUSHI-ONLY deployment against the chain,
+    ///         without deploying: `--sig 'verifySushi()'`. Reads nothing about
+    ///         Stonk: no adapter key, no pad or lens grant.
+    function verifySushi() external view {
+        require(_isRobinhood(), "wrong chain: expected Robinhood mainnet 4663 or its 9994663 fork");
+        verifySushiDeployment(
+            _requireProtocolAddress("TIER_REGISTRY"),
+            _requireProtocolAddress("STRATEGY_FACTORY"),
+            _requireDeployedAddress("LAUNCHPAD_TEMPLATE"),
+            _requireDeployedAddress("SUSHI_LAUNCH_ADAPTER")
+        );
+    }
+
+    /// @notice Every property a correct FULL deployment has, asserted. Owner
+    ///         steps are checked as FACTS: a deployment still owed Safe
+    ///         transactions fails verification until they land.
+    /// @dev    The Sushi-only core first (`verifySushiDeployment`), then the
+    ///         Stonk half, so a Sushi-only chain that later adds Stonk verifies
+    ///         the same set of facts this does.
     function verifyDeployment(address registry, address factory, address template_, address stonk, address sushi)
         public
         view
     {
-        require(template_.code.length != 0, "LAUNCHPAD_TEMPLATE holds no code");
-        require(LaunchpadStrategy(template_).vault() == address(0), "LAUNCHPAD_TEMPLATE is a clone, not the template");
+        verifySushiDeployment(registry, factory, template_, sushi);
+
         require(stonk.code.length != 0, "STONK_LAUNCH_ADAPTER holds no code");
         require(StonkLaunchAdapter(stonk).implementation() == stonk, "STONK_LAUNCH_ADAPTER is not an implementation");
-        require(sushi.code.length != 0, "SUSHI_LAUNCH_ADAPTER holds no code");
-        require(
-            SushiLaunchAdapter(payable(sushi)).implementation() == sushi,
-            "SUSHI_LAUNCH_ADAPTER is not an implementation"
-        );
-
         (address[] memory quotes, address[] memory pads) = _stonkLaneSet();
         require(
             StonkLaunchAdapter(stonk).padSetHash() == keccak256(abi.encode(quotes, pads)),
             "STONK_LAUNCH_ADAPTER padSetHash does not match the book's eight V2 lanes"
+        );
+        address[] memory counterparties = _stonkCounterparties(stonk, pads, _launchpadAddress("SAFE_LAUNCH_LENS_V2"));
+        for (uint256 i; i < counterparties.length; ++i) {
+            require(
+                TierRegistry(registry).isCounterpartyAllowed(counterparties[i]), "a Stonk counterparty is not allowed"
+            );
+        }
+        console.log("verified: STONK_LAUNCH_ADAPTER", stonk);
+    }
+
+    /// @notice Every property a correct SUSHI-ONLY deployment has, asserted:
+    ///         the template is a template and approved, the adapter is an
+    ///         implementation fronting the book's V2.2 launchpad, the registry
+    ///         points at the factory, and both the adapter and the launchpad
+    ///         proxy are allowed counterparties.
+    function verifySushiDeployment(address registry, address factory, address template_, address sushi) public view {
+        require(template_.code.length != 0, "LAUNCHPAD_TEMPLATE holds no code");
+        require(LaunchpadStrategy(template_).vault() == address(0), "LAUNCHPAD_TEMPLATE is a clone, not the template");
+        require(sushi.code.length != 0, "SUSHI_LAUNCH_ADAPTER holds no code");
+        require(
+            SushiLaunchAdapter(payable(sushi)).implementation() == sushi,
+            "SUSHI_LAUNCH_ADAPTER is not an implementation"
         );
         address sushiLaunchpad = _sushiLaunchpad();
         require(
@@ -170,17 +255,15 @@ contract DeployLaunchpadStrategy is DeploymentsBook {
 
         require(TierRegistry(registry).strategyFactory() == factory, "TIER_REGISTRY does not point at STRATEGY_FACTORY");
         require(StrategyFactory(factory).approvedTemplate(template_), "template not approved on StrategyFactory");
-        address[] memory counterparties =
-            _counterparties(stonk, pads, _launchpadAddress("SAFE_LAUNCH_LENS_V2"), sushi, sushiLaunchpad);
+        address[] memory counterparties = _sushiCounterparties(sushi, sushiLaunchpad);
         for (uint256 i; i < counterparties.length; ++i) {
             require(TierRegistry(registry).isCounterpartyAllowed(counterparties[i]), "a counterparty is not allowed");
         }
         console.log("verified: LAUNCHPAD_TEMPLATE", template_);
-        console.log("verified: STONK_LAUNCH_ADAPTER", stonk);
         console.log("verified: SUSHI_LAUNCH_ADAPTER", sushi);
     }
 
-    /// @notice The ceremony, with the two protocol singletons passed in.
+    /// @notice The FULL ceremony, with the two protocol singletons passed in.
     /// @dev    Split from `run()` so the fork rehearsal can hand it a registry
     ///         and factory it controls without touching the environment, which
     ///         concurrently running tests would share. Either may be zero: the
@@ -203,25 +286,12 @@ contract DeployLaunchpadStrategy is DeploymentsBook {
         address[] memory counterparties =
             _counterparties(address(stonkAdapter), pads, lens, address(sushiAdapter), sushiLaunchpad);
 
-        bool ownsRegistry = registry != address(0) && TierRegistry(registry).owner() == deployer;
-        if (ownsRegistry) {
-            for (uint256 i; i < counterparties.length; ++i) {
-                if (!TierRegistry(registry).isCounterpartyAllowed(counterparties[i])) {
-                    TierRegistry(registry).setCounterpartyAllowed(counterparties[i], true);
-                }
-            }
-        }
-
-        bool ownsFactory = factory != address(0) && StrategyFactory(factory).owner() == deployer;
-        if (ownsFactory && !StrategyFactory(factory).approvedTemplate(address(template))) {
-            StrategyFactory(factory).setTemplateApproval(address(template), true);
-        }
+        bool ownsRegistry = _grantIfOwner(registry, deployer, counterparties);
+        bool ownsFactory = _approveIfOwner(factory, deployer);
 
         vm.stopBroadcast();
 
-        uint256 size = address(template).code.length;
-        console.log("Template runtime size:", size);
-        require(size <= ROBINHOOD_MAX_CODE_SIZE, "template exceeds Robinhood MaxCodeSize");
+        _requireTemplateFits();
 
         console.log("StonkLaunchAdapter:   ", address(stonkAdapter));
         console.log("LaunchpadStrategy:    ", address(template));
@@ -246,6 +316,89 @@ contract DeployLaunchpadStrategy is DeploymentsBook {
             "launchpad", "sushiLaunchpadImplementation", vm.load(sushiLaunchpad, _ERC1967_IMPLEMENTATION_SLOT)
         );
         _recordMeta("launchpad", vm.serializeBool("launchpad", "ownerStepsComplete", ownsRegistry && ownsFactory));
+    }
+
+    /// @notice The SUSHI-ONLY ceremony, with the two protocol singletons
+    ///         passed in: the template and the Sushi adapter, and the two
+    ///         grants plus the template approval, performed or printed exactly
+    ///         as `deploy` does them. Nothing Stonk is deployed, granted, read
+    ///         or recorded; `stonkAdapter` stays zero.
+    /// @dev    Same split as `deploy`, for the same fork-rehearsal reason.
+    function deploySushi(address registry, address factory) public {
+        // A Sushi-only run rewrites `_meta.launchpad` whole and would drop the
+        // full ceremony's `stonkPadSetHash`; a chain with Stonk uses `run()`.
+        require(
+            _deployedAddress("STONK_LAUNCH_ADAPTER") == address(0),
+            "book already holds STONK_LAUNCH_ADAPTER: a Sushi-only run would drop its provenance, use run()"
+        );
+        address sushiLaunchpad = _sushiLaunchpad();
+
+        vm.startBroadcast();
+        (, address deployer,) = vm.readCallers();
+        console.log("Deployer:", deployer);
+        console.log("Chain ID:", block.chainid);
+
+        template = new LaunchpadStrategy();
+        sushiAdapter = new SushiLaunchAdapter(sushiLaunchpad);
+
+        address[] memory counterparties = _sushiCounterparties(address(sushiAdapter), sushiLaunchpad);
+
+        bool ownsRegistry = _grantIfOwner(registry, deployer, counterparties);
+        bool ownsFactory = _approveIfOwner(factory, deployer);
+
+        vm.stopBroadcast();
+
+        _requireTemplateFits();
+
+        console.log("LaunchpadStrategy:    ", address(template));
+        console.log("SushiLaunchAdapter:   ", address(sushiAdapter));
+        console.log("Sushi Launchpad V2 implementation (record with the grant):");
+        console.logBytes32(vm.load(sushiLaunchpad, _ERC1967_IMPLEMENTATION_SLOT));
+
+        _printRunbook(registry, factory, counterparties, ownsRegistry, ownsFactory);
+        _printValidation(registry, factory, counterparties);
+
+        _recordAddress("LAUNCHPAD_TEMPLATE", address(template));
+        _recordAddress("SUSHI_LAUNCH_ADAPTER", address(sushiAdapter));
+        vm.serializeUint("launchpad", "block", block.number);
+        vm.serializeAddress("launchpad", "deployer", deployer);
+        vm.serializeAddress("launchpad", "strategyFactory", factory);
+        vm.serializeAddress("launchpad", "tierRegistry", registry);
+        vm.serializeBytes32(
+            "launchpad", "sushiLaunchpadImplementation", vm.load(sushiLaunchpad, _ERC1967_IMPLEMENTATION_SLOT)
+        );
+        _recordMeta("launchpad", vm.serializeBool("launchpad", "ownerStepsComplete", ownsRegistry && ownsFactory));
+    }
+
+    /// @dev Grant every counterparty not yet allowed, if and only if the
+    ///      broadcaster owns the registry. Returns whether it does, which is
+    ///      what the runbook prints on. Must run inside the broadcast.
+    function _grantIfOwner(address registry, address deployer, address[] memory counterparties)
+        internal
+        returns (bool ownsRegistry)
+    {
+        ownsRegistry = registry != address(0) && TierRegistry(registry).owner() == deployer;
+        if (!ownsRegistry) return false;
+        for (uint256 i; i < counterparties.length; ++i) {
+            if (!TierRegistry(registry).isCounterpartyAllowed(counterparties[i])) {
+                TierRegistry(registry).setCounterpartyAllowed(counterparties[i], true);
+            }
+        }
+    }
+
+    /// @dev Approve the template, if and only if the broadcaster owns the
+    ///      factory. Returns whether it does. Must run inside the broadcast.
+    function _approveIfOwner(address factory, address deployer) internal returns (bool ownsFactory) {
+        ownsFactory = factory != address(0) && StrategyFactory(factory).owner() == deployer;
+        if (ownsFactory && !StrategyFactory(factory).approvedTemplate(address(template))) {
+            StrategyFactory(factory).setTemplateApproval(address(template), true);
+        }
+    }
+
+    function _requireTemplateFits() internal view {
+        uint256 size = address(template).code.length;
+        console.log("Template runtime size:", size);
+        require(size <= ROBINHOOD_MAX_CODE_SIZE, "template exceeds Robinhood MaxCodeSize");
     }
 
     /// @notice Replace ONLY the Stonk adapter: `--sig 'redeployStonk()'`.
@@ -321,7 +474,7 @@ contract DeployLaunchpadStrategy is DeploymentsBook {
         _recordMeta("stonkRedeploy", vm.serializeBool("stonkRedeploy", "granted", ownsRegistry));
     }
 
-    /// @dev Every address this ceremony vouches for, adapters first.
+    /// @dev Every address the FULL ceremony vouches for, adapters first.
     function _counterparties(address stonk, address[] memory pads, address lens, address sushi, address sushiLaunchpad)
         internal
         pure
@@ -335,6 +488,31 @@ contract DeployLaunchpadStrategy is DeploymentsBook {
         }
         list[pads.length + 2] = lens;
         list[pads.length + 3] = sushiLaunchpad;
+    }
+
+    /// @dev What the SUSHI-ONLY ceremony vouches for: the adapter, then the
+    ///      launchpad proxy. The adapter comes first because its grant must
+    ///      follow its deploy (codehash snapshot); the proxy's grant pins the
+    ///      PROXY's code, so record the implementation slot alongside it.
+    function _sushiCounterparties(address sushi, address sushiLaunchpad) internal pure returns (address[] memory list) {
+        list = new address[](2);
+        list[0] = sushi;
+        list[1] = sushiLaunchpad;
+    }
+
+    /// @dev The Stonk half of the full set: the adapter, the pads, the lens.
+    ///      What a Stonk fast-follow on a Sushi-only chain grants.
+    function _stonkCounterparties(address stonk, address[] memory pads, address lens)
+        internal
+        pure
+        returns (address[] memory list)
+    {
+        list = new address[](pads.length + 2);
+        list[0] = stonk;
+        for (uint256 i; i < pads.length; ++i) {
+            list[i + 1] = pads[i];
+        }
+        list[pads.length + 1] = lens;
     }
 
     /// @dev The Sushi Launchpad V2 proxy from the book, asserted by IDENTITY
@@ -437,7 +615,9 @@ contract DeployLaunchpadStrategy is DeploymentsBook {
         } else {
             console.log("TierRegistry:", registry);
             if (registry == address(0)) {
-                console.log("  TIER_REGISTRY unresolved: set it in the env or the protocol book");
+                console.log(
+                    "  TIER_REGISTRY unresolved: set it in the env, the protocol book or script/launchpad/addresses-4663.json"
+                );
             }
             for (uint256 i; i < counterparties.length; ++i) {
                 console.log("  setCounterpartyAllowed(counterparty, true):", counterparties[i]);
@@ -449,7 +629,9 @@ contract DeployLaunchpadStrategy is DeploymentsBook {
         } else {
             console.log("StrategyFactory:", factory);
             if (factory == address(0)) {
-                console.log("  STRATEGY_FACTORY unresolved: set it in the env or the protocol book");
+                console.log(
+                    "  STRATEGY_FACTORY unresolved: set it in the env, the protocol book or script/launchpad/addresses-4663.json"
+                );
             }
             console.log("  setTemplateApproval(template, true):", address(template));
             console.logBytes(abi.encodeCall(StrategyFactory.setTemplateApproval, (address(template), true)));
@@ -486,6 +668,15 @@ contract DeployLaunchpadStrategy is DeploymentsBook {
     }
 
     // ── address books ──
+
+    /// @dev The launchpad book doubles as the fallback for the three protocol
+    ///      keys the pinned `chains/4663.json` lacks (see the header and
+    ///      `DeploymentsBook._protocolAddress`). On 4663 only: the fork's pinned
+    ///      protocol book is complete, and a future pin that drops a key must
+    ///      not silently resolve a mainnet address there.
+    function _protocolFallbackBook() internal view override returns (string memory) {
+        return block.chainid == CHAIN_ROBINHOOD ? LAUNCHPAD_BOOK : "";
+    }
 
     /// @dev A venue key from this repo's launchpad book. Mandatory.
     function _launchpadAddress(string memory key) internal view returns (address a) {
