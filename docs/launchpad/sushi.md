@@ -140,8 +140,10 @@ template approval, and records the implementation slot under
   (F-5). Sushi V2 has no quoter for the dev buy (the pool is created inside
   `launchAndBuy`); size from a measured launch (about 164.56M tokens per
   1,000 USDG at writing) and re-measure if Sushi reprices its opening.
-- A keeper calls `collectFees` on a short cadence (SHE-313), so no fee lump
-  accrues for a depositor to time (G-5, F-2).
+- A keeper calls `collectFees` on a short cadence, so no fee lump accrues for
+  a depositor to time (G-5, F-2). SHE-313 shipped only the `claimFor` sweep;
+  the `collectFees` job is a separate keeper follow-up and must run before a
+  launch takes depositor money.
 
 These are enforced by the CLI encoder (sherwood repo,
 `cli/src/strategies/launchpad-template.ts`), not by the contracts. Finding ids

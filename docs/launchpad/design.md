@@ -173,8 +173,9 @@ template cannot close this on v1, because collection is permissionless by
 design. The mainnet decision (G-5, F-2 in
 `docs/launchpad/audit-2026-10-19-mainnet-readiness.md`) is to accept this and
 not gate `collectFees`. A keeper collects on a short cadence so no large lump
-is ever pending (SHE-313's keeper is the home for it), and the cohort
-disclosure says so. `depositsRestricted` narrows the attacker set to approved
+is ever pending, and the cohort disclosure says so. SHE-313 shipped the
+keeper's `claimFor` sweep only; the `collectFees` cadence needs its own keeper
+job (to be ticketed) before a launch takes depositor money. `depositsRestricted` narrows the attacker set to approved
 depositors; it does not remove it. Closed-deposit vaults are not exposed.
 
 The same lump has a second shape. Fees that land while a later proposal is
