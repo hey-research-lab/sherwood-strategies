@@ -118,6 +118,29 @@ template approval, and records the implementation slot under
 `_meta.launchpad.sushiLaunchpadImplementation` in `deployments/4663.json`.
 `--sig 'verifySushi()'` checks the recorded deployment against the chain.
 
+Deployed on 4663 on 2026-10-20 (blocks 93,737,582 to 93,737,603, from the registry
+and factory owner, grants and approval performed in-run, `verifySushi()` passing,
+Sourcify exact match on both):
+
+| | Address |
+|---|---|
+| `LAUNCHPAD_TEMPLATE` | `0xbc4fDF5949caa74c730bed632E368cEa4ea5832D` |
+| `SUSHI_LAUNCH_ADAPTER` (implementation; one clone per launch) | `0x52901614748ACFDC083D305Aa5301E484d4B15F8` |
+| Implementation slot recorded with the venue grant | `0x230065BdF7D8d639dc921539f16ed2FFB0521E75` |
+
+### Class certification
+
+Decision (2026-10-20): the template class is to be certified at tier 0 with a
+3,500 bps extractable bound for `execute()` and `settle()`, the bound the
+Portfolio class carries on 4663. `proposeClassCertification` from the registry
+owner, `certifyClass` after the 3-day `certifyDelay`. The honest-case loss on a
+launch with `quoteToken == asset` is fee-sized: the reserve is held in kind and
+never sold by the strategy, and the fund is the first buyer on a fresh curve.
+The bound is not code-enforced on one path: `quoteToken` is unbound by design
+and a hostile encoding with a swap leg can extract the whole notional, so the
+CLI rule and guardian review keep that path closed. Tier 0 and tier 1 are
+priced identically by the governor; the bps is the operative number.
+
 1. `new SushiLaunchAdapter(0xF1716eBf85836ffE2985db9A50dd29e5814caBe9)`. The
    constructor reads `WETH()` from the venue and locks the implementation's
    initializer.

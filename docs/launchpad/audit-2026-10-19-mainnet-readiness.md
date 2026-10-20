@@ -390,3 +390,30 @@ The in-source comments above both `executeLaunch` functions now point here; the 
 - `SushiLaunchAdapter.executeLaunch`: the detector that fires is `reentrancy-eth`, not `reentrancy-no-eth`, because `launchAndBuy{value: fee}` carries the launch fee as native value. `IWETH.withdraw` and `launchAndBuy` run before the `launchToken` / `quoteToken` writes. It cannot be exploited: the function is callable only by the implementation and only once per clone; every cross-function reader short-circuits on `launchToken == 0`; `receive` accepts native only from `weth`; the venue's state-changing entry points are `nonReentrant`; and `launch` is permissionless but always makes a fresh clone, so a reentrant frame cannot reach the half-written one. Two inputs are venue-owner trust, not facts of the code: the quote set is whatever the venue's feed registry admits (USDG and WETH at writing, extendable by the Sushi owner), and the launch token has no transfer hook only while the fee disposition is not `DISTRIBUTE_TO_HOLDERS`, which `_decodeVenueData` refuses at launch but the venue owner can set later (F-6).
 - `StonkLaunchAdapter.executeLaunch`: only `createLaunch` runs before the `launchId` / `launchToken` writes. `arm` and `buy` run after `launchToken` is set, so the "readers short-circuit on `launchToken == 0`" argument does not cover them; what covers them is that the pad (`StonkSafeLaunchpadV2`, verified source) makes all three `nonReentrant` and its token (`SafeLaunchV2Token`) is a plain ERC20 with no transfer hook, so no callback exists during `arm` or `buy`. The tax split's calls into venue-owner contracts sit inside the venue-owner trust accepted under F-6. Even a re-entered `cloneCollectFees` mid-`buy` would forward the creator fee to the same `feeRecipient` the split uses.
 - The inline `slither-disable-next-line` comments are live, not inert: deleting them brings back `reentrancy-eth` (High) on the Sushi function and `reentrancy-no-eth` on the Stonk function. They suppress only the named detectors. `slither.config.json` also excludes `reentrancy-benign` and `reentrancy-events` repo-wide (3 and 21 findings without it, about half in `src/lighter`), a disclosed choice.
+
+## Addendum, 2026-10-20: deployment and the class-certification decision
+
+`runSushi()` was broadcast on 4663 from the registry and factory owner `0x5A00…DF94` at script commit `81cfc38`
+(blocks 93,737,582 to 93,737,603): `LAUNCHPAD_TEMPLATE` `0xbc4fDF5949caa74c730bed632E368cEa4ea5832D`,
+`SUSHI_LAUNCH_ADAPTER` `0x52901614748ACFDC083D305Aa5301E484d4B15F8`. The two grants and the template approval
+were performed in the same run, `verifySushi()` passes, and both sources are exact matches on Sourcify. The
+"Safe" in section 4 and in the owner-steps paragraph above was a wrong premise: the owner is an EOA at writing.
+
+Carlos decided to class-certify the template at tier 0, 3,500 bps, for `execute()` and `settle()`, matching the
+Portfolio class bound on 4663 (Morpho Supply is at 100 bps; Lighter is uncertified). Recorded with the decision:
+
+- The template meets the SHE-209 class-review invariant on the adapter side: `launchAdapter` and `swapAdapter` are
+  checked against `isCounterpartyAllowed` at `_initialize` and re-checked at execute, and no recipient, receiver or
+  router parameter exists; fees and the reserve go to `vault()`.
+- `quoteToken` is deliberately unbound (natspec above `_initialize`), and nothing in bytecode forces
+  `quoteToken == asset` (G-4 option A). A hostile encoding with a swap leg and a loose `minQuoteOut` can extract
+  the whole notional on that path. The class bound therefore holds under every honest initialization and rests on
+  the CLI rule (sherwood#689) and guardian review under a hostile one. Any bound below 10,000 carries this.
+- Honest-case exposure with `quoteToken == asset` is fee-sized: the launch fee (bought in WETH up to `maxFeeIn`),
+  the dev buy's pool fee, and MEV on the fee leg. The reserve is held in kind and never sold by the strategy;
+  settlement pushes the unclaimed remainder unpriced. The fund is the first buyer on a fresh curve, so no one
+  holds tokens bought below its entry.
+- The governor prices tier 0 and tier 1 identically from the bps; the tier-2 per-call ceiling is the only
+  tier-keyed gate. `certifyDelay` is 3 days live; `certifyClass` is permissionless with no bond.
+
+Nothing here is an audit claim; the template and adapters are readiness-reviewed.
