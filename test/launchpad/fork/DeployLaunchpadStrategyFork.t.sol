@@ -206,6 +206,7 @@ contract DeployLaunchpadStrategyForkTest is Test {
         vm.prank(_broadcaster());
         registry.setStrategyFactory(address(factory));
         DeployLaunchpadStrategy script = new DeployLaunchpadStrategy();
+        bytes32 bookBefore = _bookHash(script);
         script.deploy(address(registry), address(factory));
 
         script.verifyDeployment(
@@ -215,7 +216,7 @@ contract DeployLaunchpadStrategyForkTest is Test {
             address(script.stonkAdapter()),
             address(script.sushiAdapter())
         );
-        assertFalse(vm.exists(script.deploymentsPath(block.chainid)), "a test run wrote the deployments book");
+        assertEq(_bookHash(script), bookBefore, "a test run wrote the deployments book");
     }
 
     /// @notice A deployment still owed its Safe transactions fails verification.
@@ -268,6 +269,7 @@ contract DeployLaunchpadStrategyForkTest is Test {
         vm.prank(_broadcaster());
         registry.setStrategyFactory(address(factory));
         DeployLaunchpadStrategy script = new DeployLaunchpadStrategy();
+        bytes32 bookBefore = _bookHash(script);
         script.deploy(address(registry), address(factory));
         address oldStonk = address(script.stonkAdapter());
         address template = address(script.template());
@@ -289,7 +291,7 @@ contract DeployLaunchpadStrategyForkTest is Test {
         assertEq(address(script.sushiAdapter()), sushi, "Sushi adapter untouched");
 
         script.verifyDeployment(address(registry), address(factory), template, newStonk, sushi);
-        assertFalse(vm.exists(script.deploymentsPath(block.chainid)), "a test run wrote the deployments book");
+        assertEq(_bookHash(script), bookBefore, "a test run wrote the deployments book");
     }
 
     /// @notice Without registry ownership the new adapter is deployed but not
@@ -427,6 +429,13 @@ contract DeployLaunchpadStrategyForkTest is Test {
     ///      test: the test's `tx.origin`.
     function _broadcaster() internal view returns (address) {
         return tx.origin;
+    }
+
+    /// @dev Hash of this chain's committed deployments book (zero if absent), so
+    ///      "tests write no book" still holds once a real book exists for the chain.
+    function _bookHash(DeployLaunchpadStrategy script) internal view returns (bytes32) {
+        string memory path = script.deploymentsPath(block.chainid);
+        return vm.exists(path) ? keccak256(bytes(vm.readFile(path))) : bytes32(0);
     }
 
     /// @dev A real v1 `TierRegistry` and `StrategyFactory`, both owned by

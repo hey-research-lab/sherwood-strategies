@@ -1,0 +1,12 @@
+{
+  "LIGHTER_PERP_TEMPLATE": "0x5A0d30EF02192CE94193fDCf9869375e53669Aa6",
+  "_meta": {
+    "lighter": {
+      "block": 93563127,
+      "deployer": "0x5A00afAecE9CF61A768E2AE2713084C8d354DF94",
+      "ownerStepsComplete": true,
+      "strategyFactory": "0xb06788F027268a9A06c3AD41a88559530D2E54b1",
+      "tierRegistry": "0x4614f058920941A0a9a852e62485fbDE692D75E1"
+    }
+  }
+}
