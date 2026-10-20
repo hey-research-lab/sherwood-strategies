@@ -135,8 +135,11 @@ template approval, and records the implementation slot under
 - `minTokensOut >= reserveAmount`. The adapter reverts
   `ReserveFloorBelowReserve` at execute otherwise: a wasted vote, no capital at
   risk (F-7).
-- `reserveAmount == minTokensOut`, both near the quoter estimate, so little
-  surplus launch token reaches the vault in kind at settle (F-5).
+- `reserveAmount == minTokensOut`, both sized near the dev buy's expected
+  output, so little surplus launch token reaches the vault in kind at settle
+  (F-5). Sushi V2 has no quoter for the dev buy (the pool is created inside
+  `launchAndBuy`); size from a measured launch (about 164.56M tokens per
+  1,000 USDG at writing) and re-measure if Sushi reprices its opening.
 - A keeper calls `collectFees` on a short cadence (SHE-313), so no fee lump
   accrues for a depositor to time (G-5, F-2).
 

@@ -224,7 +224,11 @@ to the vault in kind. On v1-deploy nothing can dispose of that balance:
 clone of the same vault, and no shipped template can take or sell an unfeeded
 launch token (F-5 in `docs/launchpad/audit-2026-10-19-mainnet-readiness.md`).
 The rule lives in the CLI, not the contract: the CLI sets `reserveAmount ==
-minTokensOut`, both close to the quoter estimate, and the SHE-313 `claimFor`
+minTokensOut` (`--min-tokens-out` defaults to `--reserve` on Sushi, a higher
+explicit value is refused), the proposer sizes both close to the dev buy's
+expected output (Sushi V2 has no quoter: `launchAndBuy` creates the token and
+its pool in the same transaction, so the figure comes from a measured launch,
+about 164.56M tokens per 1,000 USDG at writing), and the SHE-313 `claimFor`
 sweep runs before `windowEnd` so the unclaimed remainder is small. The contract
 alternative, `reserve = min(held, launchSupply * MAX_RESERVE_BPS / BPS)`, which
 would hand holders the surplus up to the 20% cap, was considered and not taken
