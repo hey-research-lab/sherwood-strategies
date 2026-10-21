@@ -359,21 +359,20 @@ change only before execute, and each value bound may only tighten.
 `minTokensOut` is visible to voters, and a proposer who could lower it after
 the vote would have been handed a sandwich budget by the vote itself.
 
-**Mainnet launches quote in the vault asset.** The quote leg's floor is the
-voted `minQuoteOut`, a static number, and `executeProposal` is permissionless,
-so anyone may bracket the execute transaction and take the gap between a fair
-fill and that floor (G-4, F-1 in
-`docs/launchpad/audit-2026-10-19-mainnet-readiness.md`). The rule for
-mainnet is `quoteToken == asset` (a USDG vault launches against USDG): no swap
-leg exists, so there is nothing to sandwich. No contract change; the CLI
-encoder refuses other quotes on 4663 (sherwood#689, open at writing) and
-guardian review is the backstop for calldata encoded by hand. Tightening
-`minQuoteOut` through `updateParams` right before execute is only a partial
-mitigation when `quoteToken != asset`: `executeProposal` is open for the whole
-execution window, so a third party can execute against the stale voted floor
-before the proposer tightens it. If launches with `quoteToken != asset` are
-wanted past the beta, the fix is a feed-anchored floor at execute (option B),
-mirroring `PortfolioStrategy._buyFloor`.
+**Mainnet launches default to the vault asset; other quotes are guarded by the
+CLI.** The quote leg's floor is the voted `minQuoteOut`, a static number, and
+`executeProposal` is permissionless, so anyone may bracket the execute
+transaction and take the gap between a fair fill and that floor (G-4, F-1 in
+`docs/launchpad/audit-2026-10-19-mainnet-readiness.md`). A launch quoted in the
+vault asset has no swap leg and nothing to sandwich. A launch quoted in any
+other `quoteSupported` token is allowed (SHE-415, sherwood#693): the CLI sets
+the floor from a fresh swap-adapter quote, refuses thin pools, caps `assetIn`
+at 3,500 bps of `totalAssets`, and proposes it disarmed (`deadline = 1`) so
+only the proposer can open a short execute window with `sherwood launchpad
+arm`. No contract change; guardian review is the backstop for calldata encoded
+by hand. The full rules are in `docs/launchpad/sushi.md` "Launch rules for
+mainnet". The on-chain fix is a feed-anchored floor at execute (option B,
+mirroring `PortfolioStrategy._buyFloor`), tracked as SHE-416.
 
 ## Decision 7: registry gates on v1
 

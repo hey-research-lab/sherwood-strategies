@@ -136,9 +136,13 @@ Portfolio class carries on 4663. `proposeClassCertification` from the registry
 owner, `certifyClass` after the 3-day `certifyDelay`. The honest-case loss on a
 launch with `quoteToken == asset` is fee-sized: the reserve is held in kind and
 never sold by the strategy, and the fund is the first buyer on a fresh curve.
-The bound is not code-enforced on one path: `quoteToken` is unbound by design
-and a hostile encoding with a swap leg can extract the whole notional, so the
-CLI rule and guardian review keep that path closed. Tier 0 and tier 1 are
+A launch quoted in another token adds a swap leg. Under the CLI guardrails
+below, its honest loss is at most the declared slippage plus price impact
+(each at most 100 bps), and the leg's notional is capped at 3,500 bps of
+`totalAssets`, so even a total loss of that leg stays inside the bound. The
+bound is not code-enforced on that path: `quoteToken` is unbound by design and
+a hostile encoding with a loose `minQuoteOut` can extract the whole swap
+notional, so the CLI rules and guardian review hold it. Tier 0 and tier 1 are
 priced identically by the governor; the bps is the operative number.
 
 1. `new SushiLaunchAdapter(0xF1716eBf85836ffE2985db9A50dd29e5814caBe9)`. The
@@ -153,8 +157,41 @@ priced identically by the governor; the bps is the operative number.
 
 ### Launch rules for mainnet
 
-- `quoteToken == asset` (a USDG vault launches against USDG), so the strategy
-  runs no swap leg and execute has nothing to sandwich (G-4, F-1).
+- The quote is any token the adapter reports `quoteSupported`
+  (`SushiLaunchAdapter.sol:357-370`, which mirrors the venue's
+  `quoteTokenPriceFeed(q) != 0`). The strategy checks it at init
+  (`LaunchpadStrategy.sol:595`). TSLA, NVDA and SPCX have feeds on the venue
+  today. The default is the vault asset (a USDG vault launches against USDG),
+  which runs no swap leg.
+- A quote other than the asset runs a swap leg through the allowlisted swap
+  adapter (`LaunchpadStrategy.sol:731-741`), floored by the voted
+  `minQuoteOut`. `executeProposal` is permissionless, so that floor is what a
+  sandwich can take (G-4, F-1). The CLI guards that leg:
+  - `minQuoteOut` = the swap adapter's quote for `assetIn` less the held-back
+    fee, times (1 − `--max-slippage-bps`). The default is 50 bps and the
+    maximum is 100; a higher value is refused, not clamped. A lower explicit
+    `--min-quote-out` is refused.
+  - Thin pool: the price impact of the full size against a 1-unit probe on the
+    same route must not exceed `--max-slippage-bps`. A thinner pool is refused.
+  - On Sushi, the quote at size may sit at most 300 bps under the output the
+    venue's own asset and quote feeds imply.
+  - `assetIn ≤ 3,500 bps × totalAssets`, the class bound. This caps the loss
+    if the floor ever fails as a floor.
+  - The venue's quote feed must have updated within 3 days, or the venue
+    reverts `StalePriceFeedRound`. Stock feeds do not update on weekends or
+    market holidays, so a stock-quoted launch may have to wait for the market.
+  - The launch is proposed disarmed, with `deadline = 1`. Both adapters revert
+    `DeadlineExpired` once `block.timestamp > deadline` and read 0 as no
+    deadline (`SushiLaunchAdapter.sol:283`, `StonkLaunchAdapter.sol:724`), so
+    a disarmed launch cannot execute. `--deadline` is refused for these
+    launches. Right before execute, the proposer runs
+    `sherwood launchpad arm <strategy>`. It re-runs the checks at current
+    prices and calls `updateParams` with `minQuoteOut` raised to the fresh
+    floor (never lowered) and `deadline` at most 1h out (default 10 minutes).
+    Only the proposer can call `updateParams`, and only while the clone is
+    pending (`LaunchpadStrategy.sol:639-641`); `minQuoteOut` may only rise and
+    `deadline` may move freely (`:657-669`). Submit the execute promptly: there
+    is no private submission on 4663, so the armed window is public.
 - `minTokensOut >= reserveAmount`. The adapter reverts
   `ReserveFloorBelowReserve` at execute otherwise: a wasted vote, no capital at
   risk (F-7).
@@ -164,16 +201,28 @@ priced identically by the governor; the bps is the operative number.
   `launchAndBuy`); size from a measured launch (about 164.56M tokens per
   1,000 USDG at writing) and re-measure if Sushi reprices its opening.
 - A keeper calls `collectFees` on a short cadence, so no fee lump accrues for
-  a depositor to time (G-5, F-2). SHE-313 shipped only the `claimFor` sweep;
-  the `collectFees` job is a separate keeper follow-up and must run before a
-  launch takes depositor money.
+  a depositor to time (G-5, F-2). The keeper sweep shipped in sherwood#691.
 
-These are enforced by the CLI encoder (sherwood repo,
-`cli/src/strategies/launchpad-template.ts`, sherwood#689, open at writing),
-not by the contracts. A proposer who encodes calldata directly bypasses them;
-guardian review of the proposal is the backstop, and `quoteToken` is fixed at
-clone init so a permissionless `executeProposal` cannot change it afterwards.
-Finding ids refer to `docs/launchpad/audit-2026-10-19-mainnet-readiness.md`.
+Settle on a launch quoted in another token:
+
+- The reserve is held in the launch token and the unclaimed remainder goes to
+  the vault in kind, as on an asset-quoted launch.
+- Leftover quote is dust or a donation: the venue consumes `quoteIn` in full.
+  `_convertQuote` swaps it back to the asset at the in-tx quote less
+  `settleSlippageBps`, and skips on failure (`LaunchpadStrategy.sol:1131-1155`).
+- Creator fees arrive at the vault in the quote token and the launch token
+  (`feeRecipient: vault()`, `LaunchpadStrategy.sol:770`). Nothing converts
+  them to the asset, and v1 `totalAssets` books no value for them. Only a later
+  governance batch can dispose of them.
+
+These rules are enforced by the CLI (sherwood repo,
+`cli/src/strategies/launchpad-template.ts` and `cli/src/commands/launchpad.ts`,
+sherwood#693, CLI 0.99.0), not by the contracts. A proposer who encodes
+calldata directly bypasses them; guardian review of the proposal is the
+backstop, and `quoteToken` is fixed at clone init so a permissionless
+`executeProposal` cannot change it afterwards. Enforcing the floor and the cap
+on-chain is SHE-416. Finding ids refer to
+`docs/launchpad/audit-2026-10-19-mainnet-readiness.md`.
 
 ## Tests
 

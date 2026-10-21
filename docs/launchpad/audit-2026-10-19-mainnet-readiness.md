@@ -109,6 +109,13 @@ Severity is rated for the mainnet configuration in section 1 (owner-only proposa
     for `quoteToken != asset`: `executeProposal` is permissionless for the whole execution window, so a third
     party can execute against the stale voted floor before the proposer tightens it. Document the `quote == asset`
     rule in the CLI help and in `docs/launchpad/design.md` Decision 6.
+    Status (2026-10-20, SHE-415): option A is superseded. The CLI now allows any `quoteSupported` quote and
+    guards the swap leg itself (sherwood#693, CLI 0.99.0): `minQuoteOut` from the swap adapter's quote less
+    `--max-slippage-bps` (default 50, max 100), a thin-pool refusal, `assetIn` at most 3,500 bps of
+    `totalAssets`, a venue-feed staleness check, and a disarmed `deadline = 1` that only the proposer can open
+    with `sherwood launchpad arm` (a window of at most 1h). That closes the third-party-executes-first gap above.
+    Rules: `docs/launchpad/sushi.md` "Launch rules for mainnet". The on-chain follow-up is SHE-416 (option B
+    plus the cap at `_initialize`).
   - Option B, code. A feed-anchored floor at execute, mirroring `PortfolioStrategy._buyFloor` and `_feedPrice`
     (`sherwood-protocol v1-deploy src/strategies/PortfolioStrategy.sol:367-392`). Add `assetFeed`, `quoteFeed`
     and `quoteSlippageBps` to `InitParams`; at init require both feeds pass `_isCounterpartyAllowed` and
@@ -409,6 +416,10 @@ Portfolio class bound on 4663 (Morpho Supply is at 100 bps; Lighter is uncertifi
   `quoteToken == asset` (G-4 option A). A hostile encoding with a swap leg and a loose `minQuoteOut` can extract
   the whole notional on that path. The class bound therefore holds under every honest initialization and rests on
   the CLI rule (sherwood#689) and guardian review under a hostile one. Any bound below 10,000 carries this.
+  Status (2026-10-20, SHE-415): the CLI rule is no longer `quoteToken == asset`. A non-asset quote is allowed
+  with swap-leg guardrails, and `assetIn` is capped at 3,500 bps of `totalAssets` so a total loss of the swap
+  leg stays inside this bound (sherwood#693, CLI 0.99.0). The bound still rests on the CLI and guardian review
+  under a hostile encoding until the on-chain follow-up, SHE-416, lands.
 - Honest-case exposure with `quoteToken == asset` is fee-sized: the launch fee (bought in WETH up to `maxFeeIn`),
   the dev buy's pool fee, and MEV on the fee leg. The reserve is held in kind and never sold by the strategy;
   settlement pushes the unclaimed remainder unpriced. The fund is the first buyer on a fresh curve, so no one
