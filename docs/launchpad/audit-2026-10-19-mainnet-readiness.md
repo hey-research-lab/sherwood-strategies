@@ -428,3 +428,20 @@ Portfolio class bound on 4663 (Morpho Supply is at 100 bps; Lighter is uncertifi
   tier-keyed gate. `certifyDelay` is 3 days live; `certifyClass` is permissionless with no bond.
 
 Nothing here is an audit claim; the template and adapters are readiness-reviewed.
+
+## Addendum, 2026-10-22: deadline check, template redeploy, disarm dropped
+
+4663 proposal 6 (the first live launch, quoted in TSLA) was blocked by the guardian fleet: the CLI 0.99.0
+"disarm" design proposed it with `deadline = 1`, the fleet's fork replay of `executeProposal` reverted
+`DeadlineExpired` at the adapter, and every voter read `SIMULATION_FAILED`. Three changes followed:
+
+- `LaunchpadStrategy` refuses a non-zero deadline that is not in the future, at `_initialize` and in
+  `_updateParams` (`DeadlineInPast`, #14). A clone that can never execute is no longer creatable.
+- The template was redeployed at `0x1F8221c4176B8B017A6Ef699947BB4A33730Df32` (block 95,339,932,
+  `redeploySushiTemplate()`, #17); the first template is un-approved. Class certification was proposed again
+  for the new codehash (`0xf9abcebf…c1e4`), tier 0, 3,500 bps, certifiable from 2026-10-25 19:05 UTC.
+- The disarm design is dropped (sherwood#700, CLI 0.99.3): a non-asset-quoted launch is proposed with a live
+  deadline and is executable as voted; `launchpad arm` is optional tightening. The stale-floor window the
+  disarm closed is now bounded by the floor off the adapter's quote, the thin-pool refusal and the 3,500 bps
+  `assetIn` cap, which is the class bound. Nothing here is an audit claim; the template remains readiness-reviewed.
+

@@ -117,6 +117,10 @@ deploys the template and the adapter, performs or prints the two grants and the
 template approval, and records the implementation slot under
 `_meta.launchpad.sushiLaunchpadImplementation` in `deployments/4663.json`.
 `--sig 'verifySushi()'` checks the recorded deployment against the chain.
+`--sig 'redeploySushiTemplate()'` replaces only the template: it deploys a
+new one, approves it on the factory, revokes the one it replaces (new clones
+only; a live clone never reads `approvedTemplate`), leaves the adapter and
+every grant alone, and prints the codehash the class certification is keyed on.
 
 Deployed on 4663 on 2026-10-20 (blocks 93,737,582 to 93,737,603, from the registry
 and factory owner, grants and approval performed in-run, `verifySushi()` passing,
@@ -124,9 +128,16 @@ Sourcify exact match on both):
 
 | | Address |
 |---|---|
-| `LAUNCHPAD_TEMPLATE` | `0xbc4fDF5949caa74c730bed632E368cEa4ea5832D` |
+| `LAUNCHPAD_TEMPLATE` (since 2026-10-22, block 95,339,932; replaces `0xbc4fDF59…832D`, now un-approved) | `0x1F8221c4176B8B017A6Ef699947BB4A33730Df32` |
 | `SUSHI_LAUNCH_ADAPTER` (implementation; one clone per launch) | `0x52901614748ACFDC083D305Aa5301E484d4B15F8` |
 | Implementation slot recorded with the venue grant | `0x230065BdF7D8d639dc921539f16ed2FFB0521E75` |
+
+The template was redeployed on 2026-10-22 with the `DeadlineInPast` check (#14):
+a clone refuses a non-zero deadline that is not in the future, at init and in
+`updateParams`. The first template was deployed on 2026-10-20 at
+`0xbc4fDF5949caa74c730bed632E368cEa4ea5832D` (blocks 93,737,582 to 93,737,603)
+and is un-approved since the redeploy; `_meta.templateRedeploy` in the book
+records the replacement. Both templates are exact matches on Sourcify.
 
 ### Class certification
 
@@ -144,6 +155,13 @@ bound is not code-enforced on that path: `quoteToken` is unbound by design and
 a hostile encoding with a loose `minQuoteOut` can extract the whole swap
 notional, so the CLI rules and guardian review hold it. Tier 0 and tier 1 are
 priced identically by the governor; the bps is the operative number.
+
+Status (2026-10-22): proposed for the redeployed template
+`0x1F8221c4…0Df32` (codehash
+`0xf9abcebf1e6072b88a75d10558eaef22c00e7ba0ac8dc4ffaea867cee2f2c1e4`), both
+selectors, certifiable from 2026-10-25 19:05 UTC (14-day window). The proposals
+made on 2026-10-20 for the first template are moot and are left to expire.
+Until `certifyClass` lands, a launch prices at tier 2.
 
 1. `new SushiLaunchAdapter(0xF1716eBf85836ffE2985db9A50dd29e5814caBe9)`. The
    constructor reads `WETH()` from the venue and locks the implementation's
@@ -180,18 +198,17 @@ priced identically by the governor; the bps is the operative number.
   - The venue's quote feed must have updated within 3 days, or the venue
     reverts `StalePriceFeedRound`. Stock feeds do not update on weekends or
     market holidays, so a stock-quoted launch may have to wait for the market.
-  - The launch is proposed disarmed, with `deadline = 1`. Both adapters revert
-    `DeadlineExpired` once `block.timestamp > deadline` and read 0 as no
-    deadline (`SushiLaunchAdapter.sol:283`, `StonkLaunchAdapter.sol:724`), so
-    a disarmed launch cannot execute. `--deadline` is refused for these
-    launches. Right before execute, the proposer runs
-    `sherwood launchpad arm <strategy>`. It re-runs the checks at current
-    prices and calls `updateParams` with `minQuoteOut` raised to the fresh
-    floor (never lowered) and `deadline` at most 1h out (default 10 minutes).
-    Only the proposer can call `updateParams`, and only while the clone is
-    pending (`LaunchpadStrategy.sol:639-641`); `minQuoteOut` may only rise and
-    `deadline` may move freely (`:657-669`). Submit the execute promptly: there
-    is no private submission on 4663, so the armed window is public.
+  - The launch carries the same live deadline as an asset-quoted one: an
+    explicit `--deadline`, otherwise the governor windows plus one day; 0 is
+    no deadline. A non-zero deadline not in the future is refused at init and
+    in `updateParams` (`DeadlineInPast`, #14). The "disarmed" design of CLI
+    0.99.0, which proposed with `deadline = 1` so that only an `arm` step could
+    make the launch executable, was dropped on 2026-10-22: the guardian fleet
+    replays execute during review and blocked every disarmed launch as
+    `SIMULATION_FAILED` (4663 proposal 6). `sherwood launchpad arm <strategy>`
+    remains an optional tightening the proposer may send right before execute
+    (`minQuoteOut` raised to a fresh floor, never lowered; a short deadline);
+    `updateParams` is proposer-only and pre-execute (`LaunchpadStrategy.sol:639-641`).
 - `minTokensOut >= reserveAmount`. The adapter reverts
   `ReserveFloorBelowReserve` at execute otherwise: a wasted vote, no capital at
   risk (F-7).
