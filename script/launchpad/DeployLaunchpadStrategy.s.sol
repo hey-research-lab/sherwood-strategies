@@ -401,6 +401,74 @@ contract DeployLaunchpadStrategy is DeploymentsBook {
         require(size <= ROBINHOOD_MAX_CODE_SIZE, "template exceeds Robinhood MaxCodeSize");
     }
 
+    /// @notice Replace ONLY the template: `--sig 'redeploySushiTemplate()'`.
+    ///         The Sushi adapter and every registry grant stay as they are.
+    function redeploySushiTemplate() external {
+        require(_isRobinhood(), "wrong chain: expected Robinhood mainnet 4663 or its 9994663 fork");
+        redeployTemplate(_protocolAddress("STRATEGY_FACTORY"), _requireDeployedAddress("LAUNCHPAD_TEMPLATE"));
+    }
+
+    /// @notice Deploy a new `LaunchpadStrategy` template, approve it and revoke
+    ///         the one it replaces when the broadcaster owns the factory (print
+    ///         both transactions otherwise), and record it as `LAUNCHPAD_TEMPLATE`.
+    /// @dev    Revoking the old template stops NEW clones only: `approvedTemplate`
+    ///         is read at clone time and never by a live clone, so no proposal in
+    ///         flight is affected. The class certification is keyed on the
+    ///         template's codehash, so the new template needs its own
+    ///         `proposeClassCertification`; the codehash is printed for it.
+    /// @param  replaces The template this one supersedes; revoked, never called.
+    function redeployTemplate(address factory, address replaces) public {
+        if (replaces.code.length != 0) {
+            require(LaunchpadStrategy(replaces).vault() == address(0), "replaces is a clone, not the template");
+        }
+
+        vm.startBroadcast();
+        (, address deployer,) = vm.readCallers();
+        console.log("Deployer:", deployer);
+        console.log("Chain ID:", block.chainid);
+
+        template = new LaunchpadStrategy();
+        bool ownsFactory = _approveIfOwner(factory, deployer);
+        bool revoked = ownsFactory && _revokeIfApproved(factory, replaces);
+
+        vm.stopBroadcast();
+
+        _requireTemplateFits();
+
+        console.log("LaunchpadStrategy (new):", address(template));
+        console.log("Replaces:               ", replaces);
+        console.log("Template codehash (proposeClassCertification expects it):");
+        console.logBytes32(address(template).codehash);
+        if (ownsFactory) {
+            console.log("Approved on StrategyFactory", factory);
+            console.log(revoked ? "Revoked the old template" : "Old template was not approved; nothing to revoke");
+        } else {
+            console.log("OWNER STEPS OWED on StrategyFactory", factory);
+            console.log("  setTemplateApproval(new, true):");
+            console.logBytes(abi.encodeCall(StrategyFactory.setTemplateApproval, (address(template), true)));
+            console.log("  setTemplateApproval(old, false):");
+            console.logBytes(abi.encodeCall(StrategyFactory.setTemplateApproval, (replaces, false)));
+        }
+
+        _recordAddress("LAUNCHPAD_TEMPLATE", address(template));
+        vm.serializeUint("templateRedeploy", "block", block.number);
+        vm.serializeAddress("templateRedeploy", "deployer", deployer);
+        vm.serializeAddress("templateRedeploy", "replaces", replaces);
+        vm.serializeAddress("templateRedeploy", "strategyFactory", factory);
+        vm.serializeBytes32("templateRedeploy", "codehash", address(template).codehash);
+        vm.serializeBool("templateRedeploy", "oldRevoked", revoked);
+        _recordMeta("templateRedeploy", vm.serializeBool("templateRedeploy", "approved", ownsFactory));
+    }
+
+    /// @dev Revoke `old` on the factory if it is still approved. Must run inside
+    ///      the broadcast, by the factory owner.
+    function _revokeIfApproved(address factory, address old) internal returns (bool revoked) {
+        if (old == address(0) || old == address(template)) return false;
+        if (!StrategyFactory(factory).approvedTemplate(old)) return false;
+        StrategyFactory(factory).setTemplateApproval(old, false);
+        return true;
+    }
+
     /// @notice Replace ONLY the Stonk adapter: `--sig 'redeployStonk()'`.
     function redeployStonk() external {
         require(_isRobinhood(), "wrong chain: expected Robinhood mainnet 4663 or its 9994663 fork");

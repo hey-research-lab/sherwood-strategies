@@ -563,6 +563,92 @@ contract DeployLaunchpadStrategyForkTest is Test {
         script.redeployStonk();
     }
 
+    // ── replacing only the template ──
+
+    /// @notice `redeployTemplate` over a complete owned Sushi-only deployment: a
+    ///         new template is approved, the one it replaces is revoked, the
+    ///         Sushi adapter and its grants are untouched, the deployment
+    ///         verifies with the new address, and a test run writes no book.
+    function test_redeployTemplate_approvesTheNewRevokesTheOldAndLeavesTheAdapterAlone() public {
+        _skipIfNoFork();
+
+        (TierRegistry registry, StrategyFactory factory) = _ownedSingletons(_broadcaster());
+        vm.prank(_broadcaster());
+        registry.setStrategyFactory(address(factory));
+        DeployLaunchpadStrategy script = new DeployLaunchpadStrategy();
+        bytes32 bookBefore = _bookHash(script);
+        script.deploySushi(address(registry), address(factory));
+        address oldTemplate = address(script.template());
+        address sushi = address(script.sushiAdapter());
+        assertTrue(factory.approvedTemplate(oldTemplate), "precondition: the old template is approved");
+
+        script.redeployTemplate(address(factory), oldTemplate);
+        address newTemplate = address(script.template());
+
+        assertTrue(newTemplate != oldTemplate, "a new template was deployed");
+        assertEq(LaunchpadStrategy(newTemplate).vault(), address(0), "a template binds no vault");
+        assertLt(newTemplate.code.length, ROBINHOOD_MAX_CODE_SIZE, "template exceeds Robinhood MaxCodeSize");
+        assertTrue(factory.approvedTemplate(newTemplate), "new template approved");
+        assertFalse(factory.approvedTemplate(oldTemplate), "old template revoked");
+        assertEq(address(script.sushiAdapter()), sushi, "Sushi adapter untouched");
+        assertTrue(registry.isCounterpartyAllowed(sushi), "Sushi adapter grant untouched");
+
+        script.verifySushiDeployment(address(registry), address(factory), newTemplate, sushi);
+        assertEq(_bookHash(script), bookBefore, "a test run wrote the deployments book");
+    }
+
+    /// @notice Without factory ownership the new template is deployed but
+    ///         neither approved nor the old one revoked; the Safe executes the
+    ///         two printed transactions.
+    function test_redeployTemplate_changesNoApprovalWhenTheBroadcasterDoesNotOwnTheFactory() public {
+        _skipIfNoFork();
+
+        address safe = makeAddr("ownerSafe");
+        (TierRegistry registry, StrategyFactory factory) = _ownedSingletons(safe);
+        DeployLaunchpadStrategy script = new DeployLaunchpadStrategy();
+        script.deploySushi(address(registry), address(factory));
+        address oldTemplate = address(script.template());
+        vm.prank(safe);
+        factory.setTemplateApproval(oldTemplate, true);
+
+        script.redeployTemplate(address(factory), oldTemplate);
+        assertFalse(factory.approvedTemplate(address(script.template())), "no approval without ownership");
+        assertTrue(factory.approvedTemplate(oldTemplate), "no revoke without ownership");
+    }
+
+    /// @notice `replaces` must be a template: handing it a clone is the mistake
+    ///         of reading an address off a proposal instead of the book.
+    function test_redeployTemplate_refusesAClone() public {
+        _skipIfNoFork();
+
+        (TierRegistry registry, StrategyFactory factory) = _ownedSingletons(_broadcaster());
+        DeployLaunchpadStrategy script = new DeployLaunchpadStrategy();
+        script.deploySushi(address(registry), address(factory));
+        MockSwapAdapter swap = new MockSwapAdapter();
+        vm.prank(_broadcaster());
+        registry.setCounterpartyAllowed(address(swap), true);
+        ForkStubVault vault = new ForkStubVault(WETH, address(new ForkStubGovernor(address(registry))));
+        address clone = Clones.clone(address(script.template()));
+        LaunchpadStrategy(clone)
+            .initialize(
+                address(vault),
+                address(this),
+                abi.encode(_sushiInitParams(address(script.sushiAdapter()), address(swap)))
+            );
+
+        vm.expectRevert(bytes("replaces is a clone, not the template"));
+        script.redeployTemplate(address(factory), clone);
+    }
+
+    function test_redeployTemplate_rejectsAWrongChainId() public {
+        _skipIfNoFork();
+        vm.chainId(1);
+
+        DeployLaunchpadStrategy script = new DeployLaunchpadStrategy();
+        vm.expectRevert(bytes("wrong chain: expected Robinhood mainnet 4663 or its 9994663 fork"));
+        script.redeploySushiTemplate();
+    }
+
     // ── the Stonk lane set ──
 
     /// @notice The lanes the book actually names are internally consistent:

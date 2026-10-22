@@ -15,8 +15,17 @@
       "strategyFactory": "0xb06788F027268a9A06c3AD41a88559530D2E54b1",
       "sushiLaunchpadImplementation": "0x000000000000000000000000230065bdf7d8d639dc921539f16ed2ffb0521e75",
       "tierRegistry": "0x4614f058920941A0a9a852e62485fbDE692D75E1"
+    },
+    "templateRedeploy": {
+      "approved": true,
+      "block": 95339932,
+      "codehash": "0xf9abcebf1e6072b88a75d10558eaef22c00e7ba0ac8dc4ffaea867cee2f2c1e4",
+      "deployer": "0x5A00afAecE9CF61A768E2AE2713084C8d354DF94",
+      "oldRevoked": true,
+      "replaces": "0xbc4fDF5949caa74c730bed632E368cEa4ea5832D",
+      "strategyFactory": "0xb06788F027268a9A06c3AD41a88559530D2E54b1"
     }
   },
-  "LAUNCHPAD_TEMPLATE": "0xbc4fDF5949caa74c730bed632E368cEa4ea5832D",
+  "LAUNCHPAD_TEMPLATE": "0x1F8221c4176B8B017A6Ef699947BB4A33730Df32",
   "SUSHI_LAUNCH_ADAPTER": "0x52901614748ACFDC083D305Aa5301E484d4B15F8"
 }
